@@ -1,3 +1,21 @@
+// Web server to keep bot alive on Render
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('🤖 CREED Bot is running!');
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime() });
+});
+
+app.listen(PORT, () => {
+  console.log(`Web server running on port ${PORT}`);
+});
+
+// Discord bot code
 const { Client, GatewayIntentBits } = require('discord.js');
 
 // Create a new Discord client
@@ -10,13 +28,13 @@ const client = new Client({
   ]
 });
 
-// When the bot is ready
-client.once('clientReady', () => {
-  console.log(`Logged in as ${client.user.tag}!`);
-});
-
 // Your specific channel ID
 const TARGET_CHANNEL_ID = '1440307136872845354';
+
+// When the bot is ready
+client.once('clientReady', () => {
+  console.log(`✅ Logged in as ${client.user.tag}!`);
+});
 
 // Respond to messages
 client.on('messageCreate', async (message) => {
@@ -61,5 +79,5 @@ client.on('guildMemberRemove', (member) => {
   }
 });
 
-// Login with your bot token
-client.login('MTQ0OTgwMDQ4NDM5NDM3MzI3Mg.Gy6E83.BfHr04N3uLdaCOeW_QqenqeZFYoDf3fw9kMrFQ');
+// Login with your bot token from environment variable
+client.login(process.env.DISCORD_TOKEN);
