@@ -1,0 +1,21 @@
+{
+  "name": "creed-bot",
+  "version": "1.0.0",
+  "description": "Discord greeting bot",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1"
+  },
+  "engines": {
+    "node": ">=16.9.0"
+  }
+}
+```
+
+### 3. **.gitignore** (optional but recommended)
+```
+node_modules/
+.env
