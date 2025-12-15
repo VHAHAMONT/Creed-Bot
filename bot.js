@@ -103,16 +103,34 @@ function parsePlayers(response) {
   const players = new Set();
   
   // PZ RCON returns something like:
-  // "Players connected (2): PlayerName1, PlayerName2"
+  // "Players connected (1):"
+  // "-vhahamont"
   const lines = response.split('\n');
   
+  console.log('Parsing response lines:', lines);
+  
   for (const line of lines) {
-    if (line.includes('Players connected')) {
-      const match = line.match(/Players connected \((\d+)\):(.*)/);
+    const trimmedLine = line.trim();
+    
+    // Check if line starts with a dash (player name)
+    if (trimmedLine.startsWith('-')) {
+      const playerName = trimmedLine.substring(1).trim();
+      if (playerName) {
+        players.add(playerName);
+        console.log('Found player:', playerName);
+      }
+    }
+    
+    // Also try the old format just in case
+    if (trimmedLine.includes('Players connected')) {
+      const match = trimmedLine.match(/Players connected \((\d+)\):(.*)/);
       if (match && match[2]) {
         const playerNames = match[2].split(',').map(name => name.trim());
         playerNames.forEach(name => {
-          if (name) players.add(name);
+          if (name && name !== '') {
+            players.add(name);
+            console.log('Found player (comma format):', name);
+          }
         });
       }
     }
