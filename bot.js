@@ -56,18 +56,24 @@ async function checkPZPlayers() {
   let rcon;
   
   try {
+    console.log('Attempting RCON connection to:', RCON_CONFIG.host, 'port:', RCON_CONFIG.port);
+    
     // Connect to RCON
     rcon = await Rcon.connect(RCON_CONFIG);
+    console.log('✅ RCON connected successfully');
     
     // Get player list
     const response = await rcon.send('players');
+    console.log('RCON Response:', response);
     
     // Parse the response to get current players
     const currentPlayers = parsePlayers(response);
+    console.log('Current players:', Array.from(currentPlayers));
     
     // Check for new players (joined)
     for (const player of currentPlayers) {
       if (!onlinePlayers.has(player)) {
+        console.log('Player joined:', player);
         await notifyPlayerJoined(player);
         onlinePlayers.add(player);
       }
@@ -76,13 +82,15 @@ async function checkPZPlayers() {
     // Check for players who left
     for (const player of onlinePlayers) {
       if (!currentPlayers.has(player)) {
+        console.log('Player left:', player);
         await notifyPlayerLeft(player);
         onlinePlayers.delete(player);
       }
     }
     
   } catch (error) {
-    console.error('RCON Error:', error.message);
+    console.error('❌ RCON Error:', error.message);
+    console.error('Full error:', error);
   } finally {
     if (rcon) {
       rcon.end();
@@ -117,7 +125,7 @@ function parsePlayers(response) {
 async function notifyPlayerJoined(playerName) {
   const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
   if (channel) {
-    await channel.send(`🎮 **${playerName}** joined the Creed PZ server! 🟢`);
+    await channel.send(`🎮 **${playerName}** joined the PZ server! 🟢`);
   }
 }
 
@@ -125,13 +133,13 @@ async function notifyPlayerJoined(playerName) {
 async function notifyPlayerLeft(playerName) {
   const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
   if (channel) {
-    await channel.send(`🎮 **${playerName}** left the Creed PZ server. 🔴`);
+    await channel.send(`🎮 **${playerName}** left the PZ server. 🔴`);
   }
 }
 
 // Start monitoring the PZ server
 function startPZMonitoring() {
-  console.log('🎮 Starting Creed PZ server monitoring...');
+  console.log('🎮 Starting PZ server monitoring...');
   
   // Check immediately
   checkPZPlayers();
