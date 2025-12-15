@@ -183,6 +183,12 @@ client.on('messageCreate', async (message) => {
       message.reply(`🎮 Players online (${onlinePlayers.size}): ${playerList}`);
     }
   }
+  
+  // Test RCON connection
+  if (content === '!testrcon') {
+    message.reply('Testing RCON connection... Check logs for details.');
+    checkPZPlayers();
+  }
 });
 
 // Welcome new members
