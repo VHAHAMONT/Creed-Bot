@@ -1,14 +1,15 @@
 {
   "name": "creed-bot",
   "version": "1.0.0",
-  "description": "Discord greeting bot",
+  "description": "Discord greeting bot with PZ server monitoring",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "rcon-client": "^4.2.3"
   },
   "engines": {
     "node": ">=16.9.0"
