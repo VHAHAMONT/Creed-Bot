@@ -9,7 +9,8 @@
   "dependencies": {
     "discord.js": "^14.14.1",
     "express": "^4.18.2",
-    "rcon-client": "^4.2.3"
+    "node-cron": "^3.0.3",
+    "rcon-client": "^4.2.1"
   },
   "engines": {
     "node": ">=16.9.0"

@@ -16,8 +16,9 @@ app.listen(PORT, () => {
 });
 
 // Discord bot code
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionFlagsBits } = require('discord.js');
 const Rcon = require('rcon-client').Rcon;
+const cron = require('node-cron');
 
 // Create a new Discord client
 const client = new Client({
@@ -35,41 +36,167 @@ const PZ_NOTIFICATIONS_CHANNEL_ID = '1450141778211766394'; // For PZ server join
 
 // PZ Server RCON Configuration
 const RCON_CONFIG = {
-  host: process.env.PZ_SERVER_IP || 'your_server_ip',
+  host: process.env.PZ_SERVER_IP || '74.63.203.35',
   port: parseInt(process.env.PZ_RCON_PORT) || 27015,
-  password: process.env.PZ_RCON_PASSWORD || 'your_rcon_password'
+  password: process.env.PZ_RCON_PASSWORD || 'zombi123creed'
 };
+
+// Admin role ID (optional - for restart commands)
+const ADMIN_ROLE_ID = process.env.ADMIN_ROLE_ID || null;
 
 // Store online players and message history
 let onlinePlayers = new Set();
-const playerMessageHistory = new Map(); // Store message IDs per player
+const playerMessageHistory = new Map();
+let restartInProgress = false;
 
-// When the bot is ready - FIXED: Changed 'clientReady' to 'ready'
+// When the bot is ready
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}!`);
   
   // Start monitoring PZ server
   startPZMonitoring();
+  
+  // Schedule automatic restarts (example: daily at 3 AM)
+  scheduleRestarts();
 });
 
-// Function to check PZ server players
+// ==================== RESTART FUNCTIONS ====================
+
+// Send RCON message to server
+async function sendRCONMessage(message) {
+  let rcon;
+  try {
+    rcon = await Rcon.connect(RCON_CONFIG);
+    await rcon.send(`servermsg "${message}"`);
+    console.log(`📢 Sent RCON message: ${message}`);
+  } catch (error) {
+    console.error('❌ Failed to send RCON message:', error.message);
+    throw error;
+  } finally {
+    if (rcon) rcon.end();
+  }
+}
+
+// Send RCON command to server
+async function sendRCONCommand(command) {
+  let rcon;
+  try {
+    rcon = await Rcon.connect(RCON_CONFIG);
+    const response = await rcon.send(command);
+    console.log(`🎮 Sent RCON command: ${command}`);
+    return response;
+  } catch (error) {
+    console.error('❌ Failed to send RCON command:', error.message);
+    throw error;
+  } finally {
+    if (rcon) rcon.end();
+  }
+}
+
+// Post notification to Discord
+async function postDiscordNotification(message, isError = false) {
+  const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
+  if (channel) {
+    const emoji = isError ? '⚠️' : '🔄';
+    await channel.send(`${emoji} ${message}`);
+  }
+}
+
+// Restart countdown sequence
+async function executeRestartCountdown() {
+  if (restartInProgress) {
+    console.log('⚠️ Restart already in progress, skipping...');
+    return;
+  }
+  
+  restartInProgress = true;
+  
+  try {
+    // 5 minute warning
+    await sendRCONMessage('⚠️ SERVER RESTART IN 5 MINUTES! Please find a safe spot!');
+    await postDiscordNotification('**Server will restart in 5 minutes!** ⏰');
+    await sleep(2 * 60 * 1000); // 2 minutes
+    
+    // 3 minute warning
+    await sendRCONMessage('⚠️ SERVER RESTART IN 3 MINUTES!');
+    await postDiscordNotification('**Server will restart in 3 minutes!** ⏰');
+    await sleep(60 * 1000); // 1 minute
+    
+    // 2 minute warning
+    await sendRCONMessage('⚠️ SERVER RESTART IN 2 MINUTES!');
+    await postDiscordNotification('**Server will restart in 2 minutes!** ⏰');
+    await sleep(60 * 1000); // 1 minute
+    
+    // 1 minute warning
+    await sendRCONMessage('⚠️ SERVER RESTART IN 1 MINUTE! SAVE NOW!');
+    await postDiscordNotification('**Server will restart in 1 minute!** 🚨');
+    await sleep(30 * 1000); // 30 seconds
+    
+    // 30 second warning
+    await sendRCONMessage('⚠️ SERVER RESTART IN 30 SECONDS!');
+    await sleep(20 * 1000); // 20 seconds
+    
+    // 10 second warning
+    await sendRCONMessage('⚠️ SERVER RESTART IN 10 SECONDS!');
+    await sleep(10 * 1000); // 10 seconds
+    
+    // Save and quit
+    await sendRCONMessage('🔄 Server restarting now...');
+    await postDiscordNotification('**Server is restarting now...** 🔄');
+    
+    // Send save command first
+    await sendRCONCommand('save');
+    await sleep(5 * 1000); // Wait 5 seconds for save
+    
+    // Note: You'll need to manually restart via qPanel or use their API
+    // The 'quit' command will shut down the server
+    await sendRCONCommand('quit');
+    
+    await postDiscordNotification('**Server shutdown initiated. Will be back online shortly!** ✅');
+    
+    console.log('✅ Restart sequence completed');
+    
+    // Clear online players since server is restarting
+    onlinePlayers.clear();
+    
+  } catch (error) {
+    console.error('❌ Error during restart sequence:', error);
+    await postDiscordNotification('**Error during restart sequence!** Check logs.', true);
+  } finally {
+    restartInProgress = false;
+  }
+}
+
+// Schedule automatic restarts
+function scheduleRestarts() {
+  // Cron format: second minute hour day month dayOfWeek
+  // '0 0 */8 * * *' = Every 8 hours (12 AM, 8 AM, 4 PM)
+  
+  const restartSchedule = process.env.RESTART_SCHEDULE || '0 0 */8 * * *';
+  
+  cron.schedule(restartSchedule, async () => {
+    console.log('🔄 Scheduled restart triggered');
+    await postDiscordNotification('**Scheduled server restart starting...** 🕐');
+    await executeRestartCountdown();
+  });
+  
+  console.log(`✅ Restart schedule set: ${restartSchedule}`);
+}
+
+// Helper sleep function
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ==================== PLAYER MONITORING ====================
+
 async function checkPZPlayers() {
   let rcon;
   
   try {
-    console.log('Attempting RCON connection to:', RCON_CONFIG.host, 'port:', RCON_CONFIG.port);
-    
-    // Connect to RCON
     rcon = await Rcon.connect(RCON_CONFIG);
-    console.log('✅ RCON connected successfully');
-    
-    // Get player list
     const response = await rcon.send('players');
-    console.log('RCON Response:', response);
-    
-    // Parse the response to get current players
     const currentPlayers = parsePlayers(response);
-    console.log('Current players:', Array.from(currentPlayers));
     
     // Check for new players (joined)
     for (const player of currentPlayers) {
@@ -91,47 +218,29 @@ async function checkPZPlayers() {
     
   } catch (error) {
     console.error('❌ RCON Error:', error.message);
-    console.error('Full error:', error);
   } finally {
-    if (rcon) {
-      rcon.end();
-    }
+    if (rcon) rcon.end();
   }
 }
 
-// Parse player list from RCON response
 function parsePlayers(response) {
   const players = new Set();
-  
-  // PZ RCON returns something like:
-  // "Players connected (1):"
-  // "-vhahamont"
   const lines = response.split('\n');
-  
-  console.log('Parsing response lines:', lines);
   
   for (const line of lines) {
     const trimmedLine = line.trim();
     
-    // Check if line starts with a dash (player name)
     if (trimmedLine.startsWith('-')) {
       const playerName = trimmedLine.substring(1).trim();
-      if (playerName) {
-        players.add(playerName);
-        console.log('Found player:', playerName);
-      }
+      if (playerName) players.add(playerName);
     }
     
-    // Also try the old format just in case
     if (trimmedLine.includes('Players connected')) {
       const match = trimmedLine.match(/Players connected \((\d+)\):(.*)/);
       if (match && match[2]) {
         const playerNames = match[2].split(',').map(name => name.trim());
         playerNames.forEach(name => {
-          if (name && name !== '') {
-            players.add(name);
-            console.log('Found player (comma format):', name);
-          }
+          if (name && name !== '') players.add(name);
         });
       }
     }
@@ -140,89 +249,66 @@ function parsePlayers(response) {
   return players;
 }
 
-// Notify when player joins
 async function notifyPlayerJoined(playerName) {
   const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
   if (channel) {
     const message = await channel.send(`🎮 **${playerName}** joined the CREED PZ server! 🟢`);
     
-    // Store this message ID for this player
     if (!playerMessageHistory.has(playerName)) {
       playerMessageHistory.set(playerName, []);
     }
     playerMessageHistory.get(playerName).push(message.id);
-    
-    console.log(`Stored join message for ${playerName}: ${message.id}`);
   }
 }
 
-// Notify when player leaves
 async function notifyPlayerLeft(playerName) {
   const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
   if (channel) {
     const message = await channel.send(`🎮 **${playerName}** left the CREED PZ server. 🔴`);
     
-    // Store this leave message too
     if (!playerMessageHistory.has(playerName)) {
       playerMessageHistory.set(playerName, []);
     }
     playerMessageHistory.get(playerName).push(message.id);
     
-    // Delete all previous messages for this player after a short delay
     setTimeout(async () => {
       await deletePlayerMessages(playerName, channel);
-    }, 3000); // Wait 3 seconds before deleting (so people can see the leave message)
+    }, 3000);
   }
 }
 
-// Function to delete all messages for a player
 async function deletePlayerMessages(playerName, channel) {
   const messageIds = playerMessageHistory.get(playerName);
   
-  if (!messageIds || messageIds.length === 0) {
-    console.log(`No messages to delete for ${playerName}`);
-    return;
-  }
-  
-  console.log(`Deleting ${messageIds.length} messages for ${playerName}`);
+  if (!messageIds || messageIds.length === 0) return;
   
   for (const messageId of messageIds) {
     try {
       const message = await channel.messages.fetch(messageId);
       await message.delete();
-      console.log(`Deleted message ${messageId} for ${playerName}`);
     } catch (error) {
       console.error(`Failed to delete message ${messageId}:`, error.message);
     }
   }
   
-  // Clear the history for this player
   playerMessageHistory.delete(playerName);
-  console.log(`Cleared message history for ${playerName}`);
 }
 
-// Start monitoring the PZ server
 function startPZMonitoring() {
   console.log('🎮 Starting PZ server monitoring...');
-  
-  // Check immediately
   checkPZPlayers();
-  
-  // Then check every 30 seconds
   setInterval(checkPZPlayers, 30000);
 }
 
-// Respond to messages
+// ==================== DISCORD COMMANDS ====================
+
 client.on('messageCreate', async (message) => {
-  // Ignore messages from bots
   if (message.author.bot) return;
 
   const content = message.content.toLowerCase();
-
-  // Get the target channel
   const targetChannel = client.channels.cache.get(TARGET_CHANNEL_ID);
 
-  // Greet with "hi"
+  // Existing commands
   if (content === 'hi' || content === 'hello' || content === 'hey') {
     if (targetChannel) {
       targetChannel.send(`${message.author} said hi in ${message.channel}! 👋`);
@@ -230,7 +316,6 @@ client.on('messageCreate', async (message) => {
     message.reply('Hi there! 👋');
   }
 
-  // Say "bye"
   if (content === 'bye' || content === 'goodbye' || content === 'see you') {
     if (targetChannel) {
       targetChannel.send(`${message.author} said bye in ${message.channel}! 👋`);
@@ -238,7 +323,7 @@ client.on('messageCreate', async (message) => {
     message.reply('Bye! See you later! 👋');
   }
   
-  // Check who's online on PZ server
+  // Check who's online
   if (content === '!players' || content === '!online') {
     if (onlinePlayers.size === 0) {
       message.reply('No players are currently online on the PZ server.');
@@ -248,14 +333,75 @@ client.on('messageCreate', async (message) => {
     }
   }
   
-  // Test RCON connection
+  // Test RCON
   if (content === '!testrcon') {
     message.reply('Testing RCON connection... Check logs for details.');
     checkPZPlayers();
   }
+  
+  // NEW COMMANDS
+  
+  // Manual restart command (admin only)
+  if (content === '!restart' || content === '!restartserver') {
+    // Check if user has admin permissions
+    const isAdmin = ADMIN_ROLE_ID ? 
+      message.member.roles.cache.has(ADMIN_ROLE_ID) : 
+      message.member.permissions.has(PermissionFlagsBits.Administrator);
+    
+    if (!isAdmin) {
+      return message.reply('❌ You need administrator permissions to restart the server.');
+    }
+    
+    if (restartInProgress) {
+      return message.reply('⚠️ A restart is already in progress!');
+    }
+    
+    message.reply('✅ Server restart initiated! Countdown starting...');
+    await executeRestartCountdown();
+  }
+  
+  // Send custom announcement to server (admin only)
+  if (content.startsWith('!announce ')) {
+    const isAdmin = ADMIN_ROLE_ID ? 
+      message.member.roles.cache.has(ADMIN_ROLE_ID) : 
+      message.member.permissions.has(PermissionFlagsBits.Administrator);
+    
+    if (!isAdmin) {
+      return message.reply('❌ You need administrator permissions to send announcements.');
+    }
+    
+    const announcement = message.content.substring(10); // Remove "!announce "
+    
+    try {
+      await sendRCONMessage(announcement);
+      message.reply(`✅ Announcement sent to server: "${announcement}"`);
+    } catch (error) {
+      message.reply('❌ Failed to send announcement. Check bot logs.');
+    }
+  }
+  
+  // Help command
+  if (content === '!help' || content === '!commands') {
+    const helpMessage = `
+**CREED PZ Bot Commands:**
+• \`!players\` or \`!online\` - Check who's online
+• \`!testrcon\` - Test RCON connection
+
+**Admin Commands:**
+• \`!restart\` - Manually trigger server restart with countdown
+• \`!announce <message>\` - Send announcement to in-game chat
+• \`!help\` - Show this message
+
+**Automatic Features:**
+• Server restarts scheduled daily at configured time
+• Join/leave notifications
+• Member welcome/goodbye messages
+    `;
+    message.reply(helpMessage);
+  }
 });
 
-// Welcome new members
+// Welcome/Goodbye for Discord members
 client.on('guildMemberAdd', (member) => {
   const targetChannel = client.channels.cache.get(TARGET_CHANNEL_ID);
   if (targetChannel) {
@@ -263,7 +409,6 @@ client.on('guildMemberAdd', (member) => {
   }
 });
 
-// Goodbye to leaving members
 client.on('guildMemberRemove', (member) => {
   const targetChannel = client.channels.cache.get(TARGET_CHANNEL_ID);
   if (targetChannel) {
@@ -271,5 +416,5 @@ client.on('guildMemberRemove', (member) => {
   }
 });
 
-// Login with your bot token from environment variable
+// Login
 client.login(process.env.DISCORD_TOKEN);
