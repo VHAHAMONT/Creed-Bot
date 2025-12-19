@@ -40,11 +40,12 @@ const RCON_CONFIG = {
   password: process.env.PZ_RCON_PASSWORD || 'your_rcon_password'
 };
 
-// Store online players
+// Store online players and message history
 let onlinePlayers = new Set();
+const playerMessageHistory = new Map(); // Store message IDs per player
 
-// When the bot is ready
-client.once('clientReady', () => {
+// When the bot is ready - FIXED: Changed 'clientReady' to 'ready'
+client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}!`);
   
   // Start monitoring PZ server
@@ -143,7 +144,15 @@ function parsePlayers(response) {
 async function notifyPlayerJoined(playerName) {
   const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
   if (channel) {
-    await channel.send(`🎮 **${playerName}** joined the PZ server! 🟢`);
+    const message = await channel.send(`🎮 **${playerName}** joined the CREED PZ server! 🟢`);
+    
+    // Store this message ID for this player
+    if (!playerMessageHistory.has(playerName)) {
+      playerMessageHistory.set(playerName, []);
+    }
+    playerMessageHistory.get(playerName).push(message.id);
+    
+    console.log(`Stored join message for ${playerName}: ${message.id}`);
   }
 }
 
@@ -151,8 +160,45 @@ async function notifyPlayerJoined(playerName) {
 async function notifyPlayerLeft(playerName) {
   const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
   if (channel) {
-    await channel.send(`🎮 **${playerName}** left the PZ server. 🔴`);
+    const message = await channel.send(`🎮 **${playerName}** left the CREED PZ server. 🔴`);
+    
+    // Store this leave message too
+    if (!playerMessageHistory.has(playerName)) {
+      playerMessageHistory.set(playerName, []);
+    }
+    playerMessageHistory.get(playerName).push(message.id);
+    
+    // Delete all previous messages for this player after a short delay
+    setTimeout(async () => {
+      await deletePlayerMessages(playerName, channel);
+    }, 3000); // Wait 3 seconds before deleting (so people can see the leave message)
   }
+}
+
+// Function to delete all messages for a player
+async function deletePlayerMessages(playerName, channel) {
+  const messageIds = playerMessageHistory.get(playerName);
+  
+  if (!messageIds || messageIds.length === 0) {
+    console.log(`No messages to delete for ${playerName}`);
+    return;
+  }
+  
+  console.log(`Deleting ${messageIds.length} messages for ${playerName}`);
+  
+  for (const messageId of messageIds) {
+    try {
+      const message = await channel.messages.fetch(messageId);
+      await message.delete();
+      console.log(`Deleted message ${messageId} for ${playerName}`);
+    } catch (error) {
+      console.error(`Failed to delete message ${messageId}:`, error.message);
+    }
+  }
+  
+  // Clear the history for this player
+  playerMessageHistory.delete(playerName);
+  console.log(`Cleared message history for ${playerName}`);
 }
 
 // Start monitoring the PZ server
