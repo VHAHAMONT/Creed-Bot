@@ -56,8 +56,8 @@ const ADMIN_ROLE_ID = process.env.ADMIN_ROLE_ID || null;
 const COMMAND_COOLDOWNS = {
   restart: 60,
   announce: 10,
-  players: 5
-  dcmessage: 10
+  players: 5,
+  dcmessage: 10,
 };
 
 // Create Discord client
@@ -600,7 +600,7 @@ client.on('messageCreate', async (message) => {
     }
 
     // Send Discord announcement (admin only)
-    if (content.startsWith('!dcmessage')) {
+    if (content.startsWith('!dcmessage ')) {
       const isAdmin = ADMIN_ROLE_ID ? 
         message.member.roles.cache.has(ADMIN_ROLE_ID) : 
         message.member.permissions.has(PermissionFlagsBits.Administrator);
@@ -609,7 +609,7 @@ client.on('messageCreate', async (message) => {
         return message.reply('❌ You need administrator permissions to send Discord announcements.');
       }
   
-      const cooldown = checkCooldown(message.author.id, '!dcmessage');
+      const cooldown = checkCooldown(message.author.id, 'dcmessage');
       if (cooldown.onCooldown) {
         return message.reply(`⏳ Please wait ${cooldown.timeLeft}s before using this command again.`);
       }
