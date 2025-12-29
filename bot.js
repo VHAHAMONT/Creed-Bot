@@ -40,6 +40,7 @@ if (missingVars.length > 0) {
 // Channel IDs
 const TARGET_CHANNEL_ID = process.env.TARGET_CHANNEL_ID || '1440307136872845354';
 const PZ_NOTIFICATIONS_CHANNEL_ID = process.env.PZ_NOTIFICATIONS_CHANNEL_ID || '1450141778211766394';
+const ANNOUNCEMENT_CHANNEL_ID = process.env.ANNOUNCEMENT_CHANNEL_ID || '1440309180979347486';
 
 // PZ Server RCON Configuration
 const RCON_CONFIG = {
@@ -56,6 +57,7 @@ const COMMAND_COOLDOWNS = {
   restart: 60,
   announce: 10,
   players: 5
+  dcmessage: 10
 };
 
 // Create Discord client
@@ -146,13 +148,14 @@ setInterval(cleanupMessageHistory, 30 * 60 * 1000);
 // ==================== RCON CONNECTION MANAGEMENT ====================
 
 async function connectRCON() {
-  if (rconConnection && !rconConnection.authenticated) {
+  // Close existing connection if present
+  if (rconConnection) {
     try {
-      await rconConnection.connect();
-      return rconConnection;
+      rconConnection.end();
     } catch (error) {
-      rconConnection = null;
+      // Ignore close errors
     }
+    rconConnection = null;
   }
   
   try {
@@ -204,7 +207,6 @@ async function sendRCONMessage(message) {
   return false;
 }
 
-// Send RCON command to server
 async function sendRCONCommand(command) {
   let attempts = 0;
   const maxAttempts = 3;
@@ -218,15 +220,17 @@ async function sendRCONCommand(command) {
     } catch (error) {
       attempts++;
       log('ERROR', `Failed to send RCON command (attempt ${attempts}/${maxAttempts})`, error);
-      rconConnection = null;
       
       if (attempts < maxAttempts) {
         await sleep(2000);
       }
+      // Don't return here - let the loop continue
     }
   }
   
-  throw new Error('Failed to send RCON command after multiple attempts');
+  // Only reached if all attempts failed
+  log('ERROR', 'Failed to send RCON command after all attempts exhausted');
+  return null;
 }
 
 // ==================== DISCORD NOTIFICATIONS ====================
@@ -245,57 +249,63 @@ async function postDiscordNotification(message, isError = false) {
 
 // ==================== RESTART FUNCTIONS ====================
 
+// Restart timing configuration
+const RESTART_TIMINGS = [
+  { minutes: 5, wait: 120000, message: '⚠️ SERVER RESTART IN 5 MINUTES! Please find a safe spot!', discord: '**Server will restart in 5 minutes!** ⏰' },
+  { minutes: 3, wait: 60000, message: '⚠️ SERVER RESTART IN 3 MINUTES!', discord: '**Server will restart in 3 minutes!** ⏰' },
+  { minutes: 2, wait: 60000, message: '⚠️ SERVER RESTART IN 2 MINUTES!', discord: '**Server will restart in 2 minutes!** ⏰' },
+  { minutes: 1, wait: 30000, message: '⚠️ SERVER RESTART IN 1 MINUTE! SAVE NOW!', discord: '**Server will restart in 1 minute!** 🚨' },
+  { seconds: 30, wait: 20000, message: '⚠️ SERVER RESTART IN 30 SECONDS!', discord: null },
+  { seconds: 10, wait: 10000, message: '⚠️ SERVER RESTART IN 10 SECONDS!', discord: null }
+];
+
 async function executeRestartCountdown() {
-  if (restartInProgress) {
-    log('WARN', 'Restart already in progress, skipping...');
-    return false;
-  }
-  
-  restartInProgress = true;
-  
   try {
-    // 5 minute warning
-    await sendRCONMessage('⚠️ SERVER RESTART IN 5 MINUTES! Please find a safe spot!');
-    await postDiscordNotification('**Server will restart in 5 minutes!** ⏰');
-    await sleep(2 * 60 * 1000); // 2 minutes
+    log('INFO', '🔄 Starting restart countdown sequence...');
     
-    // 3 minute warning
-    await sendRCONMessage('⚠️ SERVER RESTART IN 3 MINUTES!');
-    await postDiscordNotification('**Server will restart in 3 minutes!** ⏰');
-    await sleep(60 * 1000); // 1 minute
+    // Send warnings
+    for (const timing of RESTART_TIMINGS) {
+      const success = await sendRCONMessage(timing.message);
+      if (!success) {
+        log('WARN', `Failed to send RCON warning: ${timing.message}`);
+      }
+      
+      if (timing.discord) {
+        await postDiscordNotification(timing.discord);
+      }
+      
+      if (timing.wait) {
+        await sleep(timing.wait);
+      }
+    }
     
-    // 2 minute warning
-    await sendRCONMessage('⚠️ SERVER RESTART IN 2 MINUTES!');
-    await postDiscordNotification('**Server will restart in 2 minutes!** ⏰');
-    await sleep(60 * 1000); // 1 minute
-    
-    // 1 minute warning
-    await sendRCONMessage('⚠️ SERVER RESTART IN 1 MINUTE! SAVE NOW!');
-    await postDiscordNotification('**Server will restart in 1 minute!** 🚨');
-    await sleep(30 * 1000); // 30 seconds
-    
-    // 30 second warning
-    await sendRCONMessage('⚠️ SERVER RESTART IN 30 SECONDS!');
-    await sleep(20 * 1000); // 20 seconds
-    
-    // 10 second warning
-    await sendRCONMessage('⚠️ SERVER RESTART IN 10 SECONDS!');
-    await sleep(10 * 1000); // 10 seconds
-    
-    // Save and quit
+    // Final notification
     await sendRCONMessage('🔄 Server restarting now...');
     await postDiscordNotification('**Server is restarting now...** 🔄');
     
-    // Send save command first
-    await sendRCONCommand('save');
-    await sleep(5 * 1000); // Wait 5 seconds for save
+    // Save the world
+    log('INFO', 'Sending save command...');
+    const saveResponse = await sendRCONCommand('save');
+    if (!saveResponse) {
+      log('ERROR', 'Save command failed! Aborting restart.');
+      await postDiscordNotification('**⚠️ Save command failed! Restart aborted.**', true);
+      return false;
+    }
     
-    // Quit command (requires external process manager to restart)
-    await sendRCONCommand('quit');
+    log('INFO', 'Waiting for save to complete...');
+    await sleep(5000); // Wait 5 seconds for save
+    
+    // Quit server (requires external process manager to restart)
+    log('INFO', 'Sending quit command...');
+    const quitResponse = await sendRCONCommand('quit');
+    if (!quitResponse) {
+      log('ERROR', 'Quit command failed!');
+      await postDiscordNotification('**⚠️ Quit command failed! Manual intervention required.**', true);
+      return false;
+    }
     
     await postDiscordNotification('**Server shutdown initiated. Will be back online shortly!** ✅');
-    
-    log('INFO', '✅ Restart sequence completed');
+    log('INFO', '✅ Restart sequence completed successfully');
     
     // Clear online players since server is restarting
     onlinePlayers.clear();
@@ -305,8 +315,6 @@ async function executeRestartCountdown() {
     log('ERROR', 'Error during restart sequence', error);
     await postDiscordNotification('**Error during restart sequence!** Check logs.', true);
     return false;
-  } finally {
-    restartInProgress = false;
   }
 }
 
@@ -316,9 +324,22 @@ function scheduleRestarts() {
   
   try {
     cron.schedule(restartSchedule, async () => {
-      log('INFO', '🔄 Scheduled restart triggered');
-      await postDiscordNotification('**Scheduled server restart starting...** 🕐');
-      await executeRestartCountdown();
+      if (restartInProgress) {
+        log('WARN', 'Scheduled restart skipped - restart already in progress');
+        return;
+      }
+      
+      restartInProgress = true;
+      
+      try {
+        log('INFO', '🔄 Scheduled restart triggered');
+        await postDiscordNotification('**Scheduled server restart starting...** 🕐');
+        await executeRestartCountdown();
+      } catch (error) {
+        log('ERROR', 'Scheduled restart failed', error);
+      } finally {
+        restartInProgress = false;
+      }
     });
     
     log('INFO', `✅ Restart schedule set: ${restartSchedule}`);
@@ -358,7 +379,7 @@ async function checkPZPlayers() {
 
 function parsePlayers(response) {
   const players = new Set();
-  if (!response) return players;
+  if (!response || typeof response !== 'string') return players;
   
   const lines = response.split('\n');
   
@@ -516,22 +537,35 @@ client.on('messageCreate', async (message) => {
       const isAdmin = ADMIN_ROLE_ID ? 
         message.member.roles.cache.has(ADMIN_ROLE_ID) : 
         message.member.permissions.has(PermissionFlagsBits.Administrator);
-      
+  
       if (!isAdmin) {
         return message.reply('❌ You need administrator permissions to restart the server.');
       }
-      
+  
       const cooldown = checkCooldown(message.author.id, 'restart');
       if (cooldown.onCooldown) {
         return message.reply(`⏳ Please wait ${cooldown.timeLeft}s before using this command again.`);
       }
-      
+  
       if (restartInProgress) {
         return message.reply('⚠️ A restart is already in progress!');
       }
-      
-      await message.reply('✅ Server restart initiated! Countdown starting...');
-      await executeRestartCountdown();
+  
+      restartInProgress = true;  // Set the flag
+  
+      try {
+        await message.reply('✅ Server restart initiated! Countdown starting...');
+        const success = await executeRestartCountdown();
+    
+        if (!success) {
+          await message.reply('❌ Restart failed! Check notifications channel for details.');
+        }
+      } catch (error) {
+        log('ERROR', 'Manual restart command failed', error);
+        await message.reply('❌ An error occurred during restart. Check logs.');
+      } finally {
+        restartInProgress = false;  // Always reset the flag
+      }
       return;
     }
     
@@ -564,6 +598,49 @@ client.on('messageCreate', async (message) => {
       }
       return;
     }
+
+    // Send Discord announcement (admin only)
+    if (content.startsWith('!dcmessage ')) {
+      const isAdmin = ADMIN_ROLE_ID ? 
+        message.member.roles.cache.has(ADMIN_ROLE_ID) : 
+        message.member.permissions.has(PermissionFlagsBits.Administrator);
+  
+      if (!isAdmin) {
+        return message.reply('❌ You need administrator permissions to send Discord announcements.');
+      }
+  
+      const cooldown = checkCooldown(message.author.id, 'dcmessage');
+      if (cooldown.onCooldown) {
+        return message.reply(`⏳ Please wait ${cooldown.timeLeft}s before using this command again.`);
+      }
+  
+      const announcement = message.content.substring(11).trim(); // Remove "!dcmessage "
+  
+      if (!announcement) {
+        return message.reply('❌ Please provide a message to send.');
+      }
+  
+      try {
+        const announcementChannel = client.channels.cache.get(ANNOUNCEMENT_CHANNEL_ID);
+    
+        if (!announcementChannel) {
+          return message.reply('❌ Announcement channel not found! Check bot configuration.');
+        }
+    
+        // Check if bot has permission to send messages in that channel
+        if (!announcementChannel.permissionsFor(client.user).has(PermissionFlagsBits.SendMessages)) {
+          return message.reply('❌ Bot does not have permission to send messages in the announcement channel.');
+        }
+    
+        await announcementChannel.send(announcement);
+        await message.reply(`✅ Announcement sent to <#${ANNOUNCEMENT_CHANNEL_ID}>!`);
+        log('INFO', `📣 Discord announcement sent by ${message.author.tag}: ${announcement}`);
+      } catch (error) {
+        log('ERROR', 'Failed to send Discord announcement', error);
+        await message.reply('❌ Failed to send announcement. Check bot logs.');
+      }
+      return;
+    }
     
     // Help command
     if (content === '!help' || content === '!commands') {
@@ -571,18 +648,19 @@ client.on('messageCreate', async (message) => {
 **CREED PZ Bot Commands:**
 
 **General Commands:**
-• \`!players\` or \`!online\` - Check who's online
-• \`!testrcon\` - Test RCON connection
-• \`!help\` or \`!commands\` - Show this message
+- \`!players\` or \`!online\` - Check who's online
+- \`!testrcon\` - Test RCON connection
+- \`!help\` or \`!commands\` - Show this message
 
 **Admin Commands:**
-• \`!restart\` - Manually trigger server restart with countdown
-• \`!announce <message>\` - Send announcement to in-game chat
+- \`!restart\` - Manually trigger server restart with countdown
+- \`!announce <message>\` - Send announcement to in-game chat
+- \`!dcmessage <message>\` - Send announcement to Discord channel
 
 **Automatic Features:**
-• Server restarts scheduled (check schedule with admin)
-• Join/leave notifications
-• Member welcome/goodbye messages
+- Server restarts scheduled (check schedule with admin)
+- Join/leave notifications
+- Member welcome/goodbye messages
 
 **Note:** Commands have cooldowns to prevent spam.
       `;
