@@ -602,11 +602,11 @@ client.on('messageCreate', async (message) => {
     // Send Discord announcement (admin only)
     if (content.startsWith('!dcmessage ')) {
       const isAdmin = ADMIN_ROLE_ID ? 
-       message.member.roles.cache.has(ADMIN_ROLE_ID) : 
+        message.member.roles.cache.has(ADMIN_ROLE_ID) : 
         message.member.permissions.has(PermissionFlagsBits.Administrator);
-
+    
       if (!isAdmin) {
-       return message.reply('❌ You need administrator permissions to send Discord announcements.');
+        return message.reply('❌ You need administrator permissions to send Discord announcements.');
       }
 
       const cooldown = checkCooldown(message.author.id, 'dcmessage');
@@ -620,19 +620,19 @@ client.on('messageCreate', async (message) => {
 
       // Check if first word is a channel ID (starts with a number and is 17-20 chars long)
       const words = fullText.split(' ');
-     if (words.length > 0 && /^\d{17,20}$/.test(words[0])) {
-       targetChannelId = words[0];
-       announcement = words.slice(1).join(' ').trim();
+      if (words.length > 0 && /^\d{17,20}$/.test(words[0])) {
+        targetChannelId = words[0];
+        announcement = words.slice(1).join(' ').trim();
       }
 
       // Check if there's either text or an attachment
       if (!announcement && message.attachments.size === 0) {
-       return message.reply('❌ Please provide a message and/or image to send.\n**Usage:** `!dcmessage [channel_id] <message>` or attach images');
+        return message.reply('❌ Please provide a message and/or image to send.\n**Usage:** `!dcmessage [channel_id] <message>` or attach images');
       }
 
       try {
         const announcementChannel = client.channels.cache.get(targetChannelId);
-
+        
         if (!announcementChannel) {
           return message.reply(`❌ Channel not found! Make sure the channel ID is correct.\n**Tip:** Right-click a channel and select "Copy Channel ID"`);
         }
@@ -647,7 +647,7 @@ client.on('messageCreate', async (message) => {
     
         // Add text content if provided
         if (announcement) {
-         messageOptions.content = announcement;
+          messageOptions.content = announcement;
         }
     
        // Add attachments (images) if any
@@ -655,14 +655,14 @@ client.on('messageCreate', async (message) => {
           messageOptions.files = Array.from(message.attachments.values());
         }
 
-       // Send the announcement
+        // Send the announcement
         await announcementChannel.send(messageOptions);
     
         // Confirm to the admin
-       let confirmationMsg = `✅ Announcement sent to <#${targetChannelId}>!`;
-       if (message.attachments.size > 0) {
+        let confirmationMsg = `✅ Announcement sent to <#${targetChannelId}>!`;
+        if (message.attachments.size > 0) {
           confirmationMsg += ` (with ${message.attachments.size} image${message.attachments.size > 1 ? 's' : ''})`;
-       }
+        }
         await message.reply(confirmationMsg);
     
         log('INFO', `📣 Discord announcement sent by ${message.author.tag} to channel ${targetChannelId}: ${announcement || '[Image only]'} ${message.attachments.size > 0 ? `with ${message.attachments.size} attachment(s)` : ''}`);
