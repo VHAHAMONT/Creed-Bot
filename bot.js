@@ -427,83 +427,111 @@ async function notifyPlayerJoined(playerName) {
 async function notifyPlayerLeft(playerName) {
   try {
     const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
-    if (channel) {
-      const message = await channel.send(`🎮 **${playerName}** left the CREED PZ server. 🔴`);
-      
-      const historyData = playerMessageHistory.get(playerName);
-      if (historyData) {
-        historyData.messages.push(message.id);
-      } else {
-        playerMessageHistory.set(playerName, { 
-          messages: [message.id], 
-          timestamp: Date.now() 
-        });
-      }
-      
-      // Delete messages after 3 seconds with improved error handling
-      setTimeout(() => {
-        deletePlayerMessages(playerName, channel).catch(error => {
-          log('WARN', `Error in delayed deletion for ${playerName}`, error);
-        });
-      }, 3000);
+    if (!channel) {
+      log('WARN', 'PZ notifications channel not found');
+      return;
     }
+    
+    const message = await channel.send(`🎮 **${playerName}** left the CREED PZ server. 🔴`);
+    
+    const historyData = playerMessageHistory.get(playerName);
+    if (historyData) {
+      historyData.messages.push(message.id);
+    } else {
+      playerMessageHistory.set(playerName, { 
+        messages: [message.id], 
+        timestamp: Date.now() 
+      });
+    }
+    
+    // Schedule deletion with proper error handling
+    setTimeout(() => {
+      deletePlayerMessages(playerName)
+        .catch(error => {
+          log('WARN', `Delayed deletion error for ${playerName}`, error);
+        });
+    }, 3000);
+    
   } catch (error) {
     log('ERROR', 'Failed to send player left notification', error);
   }
 }
 
-async function deletePlayerMessages(playerName, channel) {
-  const historyData = playerMessageHistory.get(playerName);
-  
-  if (!historyData || !historyData.messages || historyData.messages.length === 0) {
-    log('DEBUG', `No messages to delete for ${playerName}`);
-    return;
-  }
-  
-  // Refresh channel object to ensure we have latest permissions
+async function deletePlayerMessages(playerName) {
   try {
-    channel = await client.channels.fetch(PZ_NOTIFICATIONS_CHANNEL_ID);
-  } catch (error) {
-    log('WARN', 'Failed to refresh channel for message deletion', error);
-    // Continue with cached channel
-  }
-  
-  // Check if bot has permission to delete messages
-  if (!channel.permissionsFor(client.user).has(PermissionFlagsBits.ManageMessages)) {
-    log('ERROR', `Bot lacks MANAGE_MESSAGES permission in channel ${PZ_NOTIFICATIONS_CHANNEL_ID}`);
-    playerMessageHistory.delete(playerName);
-    return;
-  }
-  
-  let deletedCount = 0;
-  let failedCount = 0;
-  
-  for (const messageId of historyData.messages) {
+    const historyData = playerMessageHistory.get(playerName);
+    
+    if (!historyData || !historyData.messages || historyData.messages.length === 0) {
+      log('DEBUG', `No messages to delete for ${playerName}`);
+      playerMessageHistory.delete(playerName);
+      return;
+    }
+    
+    // Get fresh channel reference
+    let channel;
     try {
-      const message = await channel.messages.fetch(messageId);
-      await message.delete();
-      deletedCount++;
-      log('DEBUG', `Deleted message ${messageId} for ${playerName}`);
-      
-      // Small delay between deletions to avoid rate limiting
-      await sleep(100);
-    } catch (error) {
-      failedCount++;
-      // Common error codes:
-      // 10008 = Unknown Message (already deleted)
-      // 50013 = Missing Permissions
-      if (error.code === 10008) {
-        log('DEBUG', `Message ${messageId} already deleted for ${playerName}`);
-      } else if (error.code === 50013) {
-        log('ERROR', `Missing permission to delete message ${messageId}`);
-      } else {
-        log('WARN', `Failed to delete message ${messageId} for ${playerName}`, error);
+      channel = await client.channels.fetch(PZ_NOTIFICATIONS_CHANNEL_ID);
+    } catch (fetchError) {
+      log('WARN', 'Failed to fetch channel for deletion', fetchError);
+      channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
+      if (!channel) {
+        log('ERROR', 'Channel not available for message deletion');
+        playerMessageHistory.delete(playerName);
+        return;
       }
     }
+    
+    // Check permissions
+    const permissions = channel.permissionsFor(client.user);
+    if (!permissions || !permissions.has(PermissionFlagsBits.ManageMessages)) {
+      log('ERROR', `Bot lacks MANAGE_MESSAGES permission in channel ${PZ_NOTIFICATIONS_CHANNEL_ID}`);
+      playerMessageHistory.delete(playerName);
+      return;
+    }
+    
+    let deletedCount = 0;
+    let failedCount = 0;
+    
+    // Delete each message
+    for (const messageId of historyData.messages) {
+      try {
+        const message = await channel.messages.fetch(messageId);
+        await message.delete();
+        deletedCount++;
+        log('DEBUG', `Deleted message ${messageId} for ${playerName}`);
+        
+        // Small delay to avoid rate limiting
+        if (historyData.messages.length > 1) {
+          await sleep(100);
+        }
+      } catch (deleteError) {
+        failedCount++;
+        
+        // Handle specific Discord API errors
+        if (deleteError.code === 10008) {
+          log('DEBUG', `Message ${messageId} already deleted for ${playerName}`);
+        } else if (deleteError.code === 50013) {
+          log('ERROR', `Missing permission to delete message ${messageId}`);
+        } else if (deleteError.code === 50001) {
+          log('ERROR', `Missing access to delete message ${messageId}`);
+        } else {
+          log('WARN', `Failed to delete message ${messageId} for ${playerName}: ${deleteError.message}`);
+        }
+      }
+    }
+    
+    if (deletedCount > 0 || failedCount > 0) {
+      log('INFO', `Message cleanup for ${playerName}: ${deletedCount} deleted, ${failedCount} failed`);
+    }
+    
+    // Always clean up the history entry
+    playerMessageHistory.delete(playerName);
+    
+  } catch (error) {
+    log('ERROR', `Unexpected error in deletePlayerMessages for ${playerName}`, error);
+    // Clean up even on error
+    playerMessageHistory.delete(playerName);
   }
-  
-  log('INFO', `Message cleanup for ${playerName}: ${deletedCount} deleted, ${failedCount} failed`);
-  playerMessageHistory.delete(playerName);
 }
 
 // ==================== DISCORD EVENT HANDLERS ====================
