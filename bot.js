@@ -628,14 +628,18 @@ client.on('messageCreate', async (message) => {
       const args = message.content.substring(11).trim().split(' ');
   
       if (args.length < 2) {
-        return message.reply('❌ Usage: `!dcmessage <channel_id> <message>`\nExample: `!dcmessage 1440309180979347486 Hello everyone!`');
+        return message.reply('❌ Usage: `!dcmessage <channel_id> <message>`\nExample: `!dcmessage 1440309180979347486 Hello everyone!`\n\n**Tip:** You can attach images to send them too!');
       }
 
       const targetChannelId = args[0];
       const announcement = args.slice(1).join(' ');
 
+      // Check if there are attachments
+      const attachments = message.attachments;
+      const hasAttachments = attachments.size > 0;
+
       if (!announcement.trim()) {
-        return message.reply('❌ Please provide a message to send.');
+        return message.reply('❌ Please provide a message or attach an image.');
       }
 
       try {
@@ -650,9 +654,26 @@ client.on('messageCreate', async (message) => {
           return message.reply(`❌ Bot does not have permission to send messages in <#${targetChannelId}>.`);
         }
 
+        // Prepare message options
+        const messageOptions = {};
+
+        if (announcement.trim()) {
+          messageOptions.content = announcement;
+        }
+
+        // Add attachments if present
+        if (hasAttachments) {
+          messageOptions.files = Array.from(attachments.values()).map(attachment => ({
+            attachment: attachment.url,
+            name: attachment.name
+          }));
+        }
+
         await announcementChannel.send(announcement);
-        await message.reply(`✅ Announcement sent to <#${targetChannelId}>!`);
-        log('INFO', `📣 Discord announcement sent by ${message.author.tag} to ${targetChannelId}: ${announcement}`);
+
+        const attachmentInfo = hasAttachments ? ` with ${attachments.size} attachment(s)` : '';
+        await message.reply(`✅ Announcement sent to <#${targetChannelId}>!${attachmentInfo}`);
+        log('INFO', `📣 Discord announcement sent by ${message.author.tag} to ${targetChannelId}: ${announcement}${attachmentInfo}`);
       } catch (error) {
         log('ERROR', 'Failed to send Discord announcement', error);
         await message.reply('❌ Failed to send announcement. Check bot logs.');
