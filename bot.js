@@ -220,15 +220,14 @@ async function sendRCONCommand(command) {
     } catch (error) {
       attempts++;
       log('ERROR', `Failed to send RCON command (attempt ${attempts}/${maxAttempts})`, error);
+      rconConnection = null; // Reset here on every failure
       
       if (attempts < maxAttempts) {
         await sleep(2000);
       }
-      // Don't return here - let the loop continue
     }
   }
   
-  // Only reached if all attempts failed
   log('ERROR', 'Failed to send RCON command after all attempts exhausted');
   return null;
 }
@@ -475,8 +474,15 @@ function startPZMonitoring() {
 
 // ==================== DISCORD EVENT HANDLERS ====================
 
-client.once('ready', () => {
+client.once('ready', async () => {
   log('INFO', `✅ Logged in as ${client.user.tag}!`);
+  
+  // Establish initial RCON connection
+  try {
+    await connectRCON();
+  } catch (error) {
+    log('ERROR', 'Failed to establish initial RCON connection', error);
+  }
   
   // Start monitoring PZ server
   startPZMonitoring();
@@ -527,8 +533,12 @@ client.on('messageCreate', async (message) => {
     
     // Test RCON
     if (content === '!testrcon') {
-      await message.reply('Testing RCON connection... Check logs for details.');
-      checkPZPlayers();
+      try {
+        const response = await sendRCONCommand('help');
+        await message.reply(`✅ RCON connected! Response: ${response ? 'OK' : 'Failed'}`);
+      } catch (error) {
+        await message.reply(`❌ RCON error: ${error.message}`);
+      }
       return;
     }
     
