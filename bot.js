@@ -427,111 +427,50 @@ async function notifyPlayerJoined(playerName) {
 async function notifyPlayerLeft(playerName) {
   try {
     const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
-    if (!channel) {
-      log('WARN', 'PZ notifications channel not found');
-      return;
-    }
-    
-    const message = await channel.send(`🎮 **${playerName}** left the CREED PZ server. 🔴`);
-    
-    const historyData = playerMessageHistory.get(playerName);
-    if (historyData) {
-      historyData.messages.push(message.id);
-    } else {
-      playerMessageHistory.set(playerName, { 
-        messages: [message.id], 
-        timestamp: Date.now() 
-      });
-    }
-    
-    // Schedule deletion with proper error handling
-    setTimeout(() => {
-      deletePlayerMessages(playerName)
-        .catch(error => {
-          log('WARN', `Delayed deletion error for ${playerName}`, error);
+    if (channel) {
+      const message = await channel.send(`🎮 **${playerName}** left the CREED PZ server. 🔴`);
+      
+      const historyData = playerMessageHistory.get(playerName);
+      if (historyData) {
+        historyData.messages.push(message.id);
+      } else {
+        playerMessageHistory.set(playerName, { 
+          messages: [message.id], 
+          timestamp: Date.now() 
         });
-    }, 3000);
-    
+      }
+      
+      // Delete messages after 3 seconds
+      setTimeout(async () => {
+        await deletePlayerMessages(playerName, channel);
+      }, 3000);
+    }
   } catch (error) {
     log('ERROR', 'Failed to send player left notification', error);
   }
 }
 
-async function deletePlayerMessages(playerName) {
-  try {
-    const historyData = playerMessageHistory.get(playerName);
-    
-    if (!historyData || !historyData.messages || historyData.messages.length === 0) {
-      log('DEBUG', `No messages to delete for ${playerName}`);
-      playerMessageHistory.delete(playerName);
-      return;
-    }
-    
-    // Get fresh channel reference
-    let channel;
+async function deletePlayerMessages(playerName, channel) {
+  const historyData = playerMessageHistory.get(playerName);
+  
+  if (!historyData || !historyData.messages || historyData.messages.length === 0) return;
+  
+  for (const messageId of historyData.messages) {
     try {
-      channel = await client.channels.fetch(PZ_NOTIFICATIONS_CHANNEL_ID);
-    } catch (fetchError) {
-      log('WARN', 'Failed to fetch channel for deletion', fetchError);
-      channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
-      if (!channel) {
-        log('ERROR', 'Channel not available for message deletion');
-        playerMessageHistory.delete(playerName);
-        return;
-      }
+      const message = await channel.messages.fetch(messageId);
+      await message.delete();
+    } catch (error) {
+      log('WARN', `Failed to delete message ${messageId}`, error);
     }
-    
-    // Check permissions
-    const permissions = channel.permissionsFor(client.user);
-    if (!permissions || !permissions.has(PermissionFlagsBits.ManageMessages)) {
-      log('ERROR', `Bot lacks MANAGE_MESSAGES permission in channel ${PZ_NOTIFICATIONS_CHANNEL_ID}`);
-      playerMessageHistory.delete(playerName);
-      return;
-    }
-    
-    let deletedCount = 0;
-    let failedCount = 0;
-    
-    // Delete each message
-    for (const messageId of historyData.messages) {
-      try {
-        const message = await channel.messages.fetch(messageId);
-        await message.delete();
-        deletedCount++;
-        log('DEBUG', `Deleted message ${messageId} for ${playerName}`);
-        
-        // Small delay to avoid rate limiting
-        if (historyData.messages.length > 1) {
-          await sleep(100);
-        }
-      } catch (deleteError) {
-        failedCount++;
-        
-        // Handle specific Discord API errors
-        if (deleteError.code === 10008) {
-          log('DEBUG', `Message ${messageId} already deleted for ${playerName}`);
-        } else if (deleteError.code === 50013) {
-          log('ERROR', `Missing permission to delete message ${messageId}`);
-        } else if (deleteError.code === 50001) {
-          log('ERROR', `Missing access to delete message ${messageId}`);
-        } else {
-          log('WARN', `Failed to delete message ${messageId} for ${playerName}: ${deleteError.message}`);
-        }
-      }
-    }
-    
-    if (deletedCount > 0 || failedCount > 0) {
-      log('INFO', `Message cleanup for ${playerName}: ${deletedCount} deleted, ${failedCount} failed`);
-    }
-    
-    // Always clean up the history entry
-    playerMessageHistory.delete(playerName);
-    
-  } catch (error) {
-    log('ERROR', `Unexpected error in deletePlayerMessages for ${playerName}`, error);
-    // Clean up even on error
-    playerMessageHistory.delete(playerName);
   }
+  
+  playerMessageHistory.delete(playerName);
+}
+
+function startPZMonitoring() {
+  log('INFO', '🎮 Starting PZ server monitoring...');
+  checkPZPlayers();
+  setInterval(checkPZPlayers, 30000); // Check every 30 seconds
 }
 
 // ==================== DISCORD EVENT HANDLERS ====================
@@ -665,68 +604,37 @@ client.on('messageCreate', async (message) => {
       const isAdmin = ADMIN_ROLE_ID ? 
         message.member.roles.cache.has(ADMIN_ROLE_ID) : 
         message.member.permissions.has(PermissionFlagsBits.Administrator);
-      
+  
       if (!isAdmin) {
         return message.reply('❌ You need administrator permissions to send Discord announcements.');
       }
-
+  
       const cooldown = checkCooldown(message.author.id, 'dcmessage');
       if (cooldown.onCooldown) {
         return message.reply(`⏳ Please wait ${cooldown.timeLeft}s before using this command again.`);
       }
-
-      let fullText = message.content.substring(11).trim(); // Remove "!dcmessage "
-      let targetChannelId = ANNOUNCEMENT_CHANNEL_ID; // Default channel
-      let announcement = fullText;
-
-      // Check if first word is a channel ID (starts with a number and is 17-20 chars long)
-      const words = fullText.split(' ');
-      if (words.length > 0 && /^\d{17,20}$/.test(words[0])) {
-        targetChannelId = words[0];
-        announcement = words.slice(1).join(' ').trim();
+  
+      const announcement = message.content.substring(11).trim(); // Remove "!dcmessage "
+  
+      if (!announcement) {
+        return message.reply('❌ Please provide a message to send.');
       }
-
-      // Check if there's either text or an attachment
-      if (!announcement && message.attachments.size === 0) {
-        return message.reply('❌ Please provide a message and/or image to send.\n**Usage:** `!dcmessage [channel_id] <message>` or attach images');
-      }
-
+  
       try {
-        const announcementChannel = client.channels.cache.get(targetChannelId);
-
+        const announcementChannel = client.channels.cache.get(ANNOUNCEMENT_CHANNEL_ID);
+    
         if (!announcementChannel) {
-          return message.reply(`❌ Channel not found! Make sure the channel ID is correct.\n**Tip:** Right-click a channel and select "Copy Channel ID"`);
+          return message.reply('❌ Announcement channel not found! Check bot configuration.');
         }
-
+    
         // Check if bot has permission to send messages in that channel
         if (!announcementChannel.permissionsFor(client.user).has(PermissionFlagsBits.SendMessages)) {
-          return message.reply('❌ Bot does not have permission to send messages in that channel.');
-        }
-
-        // Prepare message options
-        const messageOptions = {};
-    
-        // Add text content if provided
-        if (announcement) {
-          messageOptions.content = announcement;
+          return message.reply('❌ Bot does not have permission to send messages in the announcement channel.');
         }
     
-        // Add attachments (images) if any
-        if (message.attachments.size > 0) {
-          messageOptions.files = Array.from(message.attachments.values());
-        }
-
-        // Send the announcement
-        await announcementChannel.send(messageOptions);
-
-        // Confirm to the admin
-        let confirmationMsg = `✅ Announcement sent to <#${targetChannelId}>!`;
-        if (message.attachments.size > 0) {
-          confirmationMsg += ` (with ${message.attachments.size} image${message.attachments.size > 1 ? 's' : ''})`;
-        }
-        await message.reply(confirmationMsg);
-
-        log('INFO', `📣 Discord announcement sent by ${message.author.tag} to channel ${targetChannelId}: ${announcement || '[Image only]'} ${message.attachments.size > 0 ? `with ${message.attachments.size} attachment(s)` : ''}`);
+        await announcementChannel.send(announcement);
+        await message.reply(`✅ Announcement sent to <#${ANNOUNCEMENT_CHANNEL_ID}>!`);
+        log('INFO', `📣 Discord announcement sent by ${message.author.tag}: ${announcement}`);
       } catch (error) {
         log('ERROR', 'Failed to send Discord announcement', error);
         await message.reply('❌ Failed to send announcement. Check bot logs.');
