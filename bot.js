@@ -652,6 +652,57 @@ client.on('messageCreate', async (message) => {
       return;
     }
     
+    // Send Discord announcement to specified channel (admin only)
+    if (content.startsWith('!dcmessage ')) {
+      const isAdmin = ADMIN_ROLE_ID ? 
+        message.member.roles.cache.has(ADMIN_ROLE_ID) : 
+        message.member.permissions.has(PermissionFlagsBits.Administrator);
+
+      if (!isAdmin) {
+        return message.reply('❌ You need administrator permissions to send Discord announcements.');
+      }
+
+      const cooldown = checkCooldown(message.author.id, 'dcmessage');
+      if (cooldown.onCooldown) {
+        return message.reply(`⏳ Please wait ${cooldown.timeLeft}s before using this command again.`);
+      }
+
+      // Parse command: !dcmessage <channel_id> <message>
+      const args = message.content.substring(11).trim().split(' ');
+  
+      if (args.length < 2) {
+        return message.reply('❌ Usage: `!dcmessage <channel_id> <message>`\nExample: `!dcmessage 1440309180979347486 Hello everyone!`');
+      }
+
+      const targetChannelId = args[0];
+      const announcement = args.slice(1).join(' ');
+
+      if (!announcement.trim()) {
+        return message.reply('❌ Please provide a message to send.');
+      }
+
+      try {
+        const announcementChannel = client.channels.cache.get(targetChannelId);
+
+        if (!announcementChannel) {
+          return message.reply(`❌ Channel with ID \`${targetChannelId}\` not found! Make sure the bot has access to it.`);
+        }
+
+        // Check if bot has permission to send messages in that channel
+        if (!announcementChannel.permissionsFor(client.user).has(PermissionFlagsBits.SendMessages)) {
+          return message.reply(`❌ Bot does not have permission to send messages in <#${targetChannelId}>.`);
+        }
+
+        await announcementChannel.send(announcement);
+        await message.reply(`✅ Announcement sent to <#${targetChannelId}>!`);
+        log('INFO', `📣 Discord announcement sent by ${message.author.tag} to ${targetChannelId}: ${announcement}`);
+      } catch (error) {
+        log('ERROR', 'Failed to send Discord announcement', error);
+        await message.reply('❌ Failed to send announcement. Check bot logs.');
+      }
+      return;
+    }
+
     // Help command
     if (content === '!help' || content === '!commands') {
       const helpMessage = `
@@ -666,6 +717,7 @@ client.on('messageCreate', async (message) => {
 - \`!restart\` - Manually trigger server restart with countdown
 - \`!announce <message>\` - Send announcement to in-game chat
 - \`!dcmessage <message>\` - Send announcement to Discord channel
+- \`!dcmessage <discord channel ID> <message>\` - Send message to Specified Discord channel
 
 **Automatic Features:**
 - Server restarts scheduled (check schedule with admin)
