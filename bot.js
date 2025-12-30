@@ -627,7 +627,7 @@ client.on('messageCreate', async (message) => {
       // Parse command: !dcmessage <channel_id> <message>
       const args = message.content.substring(11).trim().split(' ');
   
-      if (args.length < 2) {
+      if (args.length < 1) {
         return message.reply('❌ Usage: `!dcmessage <channel_id> <message>`\nExample: `!dcmessage 1440309180979347486 Hello everyone!`\n\n**Tip:** You can attach images to send them too!');
       }
 
@@ -638,7 +638,8 @@ client.on('messageCreate', async (message) => {
       const attachments = message.attachments;
       const hasAttachments = attachments.size > 0;
 
-      if (!announcement.trim()) {
+      // Must have either text message OR attachments
+      if (!announcement.trim() && !hasAttachments) {
         return message.reply('❌ Please provide a message or attach an image.');
       }
 
@@ -669,7 +670,8 @@ client.on('messageCreate', async (message) => {
           }));
         }
 
-        await announcementChannel.send(announcement);
+        // ✅ FIXED: Send messageOptions instead of just announcement
+        await announcementChannel.send(messageOptions);
 
         const attachmentInfo = hasAttachments ? ` with ${attachments.size} attachment(s)` : '';
         await message.reply(`✅ Announcement sent to <#${targetChannelId}>!${attachmentInfo}`);
