@@ -616,8 +616,9 @@ client.on('messageCreate', async (message) => {
   
       const announcement = message.content.substring(11).trim(); // Remove "!dcmessage "
   
-      if (!announcement) {
-        return message.reply('❌ Please provide a message to send.');
+      // Check if there's either text or an attachment
+      if (!announcement && message.attachments.size === 0) {
+        return message.reply('❌ Please provide a message and/or image to send.');
       }
   
       try {
@@ -632,9 +633,30 @@ client.on('messageCreate', async (message) => {
           return message.reply('❌ Bot does not have permission to send messages in the announcement channel.');
         }
     
-        await announcementChannel.send(announcement);
-        await message.reply(`✅ Announcement sent to <#${ANNOUNCEMENT_CHANNEL_ID}>!`);
-        log('INFO', `📣 Discord announcement sent by ${message.author.tag}: ${announcement}`);
+          // Prepare message options
+        const messageOptions = {};
+    
+        // Add text content if provided
+        if (announcement) {
+          messageOptions.content = announcement;
+        }
+    
+        // Add attachments (images) if any
+        if (message.attachments.size > 0) {
+          messageOptions.files = Array.from(message.attachments.values());
+        }
+
+        // Send the announcement
+        await announcementChannel.send(messageOptions);
+    
+        // Confirm to the admin
+        let confirmationMsg = '✅ Announcement sent to <#' + ANNOUNCEMENT_CHANNEL_ID + '>!';
+        if (message.attachments.size > 0) {
+          confirmationMsg += ` (with ${message.attachments.size} image${message.attachments.size > 1 ? 's' : ''})`;
+        }
+        await message.reply(confirmationMsg);
+    
+        log('INFO', `📣 Discord announcement sent by ${message.author.tag}: ${announcement || '[Image only]'} ${message.attachments.size > 0 ? `with ${message.attachments.size} attachment(s)` : ''}`);
       } catch (error) {
         log('ERROR', 'Failed to send Discord announcement', error);
         await message.reply('❌ Failed to send announcement. Check bot logs.');
