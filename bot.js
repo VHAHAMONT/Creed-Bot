@@ -441,12 +441,10 @@ async function notifyPlayerLeft(playerName) {
       }
       
       // Delete messages after 3 seconds with improved error handling
-      setTimeout(async () => {
-        try {
-          await deletePlayerMessages(playerName, channel);
-        } catch (error) {
+      setTimeout(() => {
+        deletePlayerMessages(playerName, channel).catch(error => {
           log('WARN', `Error in delayed deletion for ${playerName}`, error);
-        }
+        });
       }, 3000);
     }
   } catch (error) {
