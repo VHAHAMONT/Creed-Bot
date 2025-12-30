@@ -604,7 +604,7 @@ client.on('messageCreate', async (message) => {
       const isAdmin = ADMIN_ROLE_ID ? 
         message.member.roles.cache.has(ADMIN_ROLE_ID) : 
         message.member.permissions.has(PermissionFlagsBits.Administrator);
-    
+
       if (!isAdmin) {
         return message.reply('❌ You need administrator permissions to send Discord announcements.');
       }
@@ -632,7 +632,7 @@ client.on('messageCreate', async (message) => {
 
       try {
         const announcementChannel = client.channels.cache.get(targetChannelId);
-        
+
         if (!announcementChannel) {
           return message.reply(`❌ Channel not found! Make sure the channel ID is correct.\n**Tip:** Right-click a channel and select "Copy Channel ID"`);
         }
@@ -650,21 +650,21 @@ client.on('messageCreate', async (message) => {
           messageOptions.content = announcement;
         }
     
-       // Add attachments (images) if any
+        // Add attachments (images) if any
         if (message.attachments.size > 0) {
           messageOptions.files = Array.from(message.attachments.values());
         }
 
         // Send the announcement
         await announcementChannel.send(messageOptions);
-    
+
         // Confirm to the admin
         let confirmationMsg = `✅ Announcement sent to <#${targetChannelId}>!`;
         if (message.attachments.size > 0) {
           confirmationMsg += ` (with ${message.attachments.size} image${message.attachments.size > 1 ? 's' : ''})`;
         }
         await message.reply(confirmationMsg);
-    
+
         log('INFO', `📣 Discord announcement sent by ${message.author.tag} to channel ${targetChannelId}: ${announcement || '[Image only]'} ${message.attachments.size > 0 ? `with ${message.attachments.size} attachment(s)` : ''}`);
       } catch (error) {
         log('ERROR', 'Failed to send Discord announcement', error);
