@@ -440,9 +440,13 @@ async function notifyPlayerLeft(playerName) {
         });
       }
       
-      // Delete messages after 3 seconds
+      // Delete messages after 3 seconds with improved error handling
       setTimeout(async () => {
-        await deletePlayerMessages(playerName, channel);
+        try {
+          await deletePlayerMessages(playerName, channel);
+        } catch (error) {
+          log('WARN', `Error in delayed deletion for ${playerName}`, error);
+        }
       }, 3000);
     }
   } catch (error) {
@@ -453,24 +457,55 @@ async function notifyPlayerLeft(playerName) {
 async function deletePlayerMessages(playerName, channel) {
   const historyData = playerMessageHistory.get(playerName);
   
-  if (!historyData || !historyData.messages || historyData.messages.length === 0) return;
+  if (!historyData || !historyData.messages || historyData.messages.length === 0) {
+    log('DEBUG', `No messages to delete for ${playerName}`);
+    return;
+  }
+  
+  // Refresh channel object to ensure we have latest permissions
+  try {
+    channel = await client.channels.fetch(PZ_NOTIFICATIONS_CHANNEL_ID);
+  } catch (error) {
+    log('WARN', 'Failed to refresh channel for message deletion', error);
+    // Continue with cached channel
+  }
+  
+  // Check if bot has permission to delete messages
+  if (!channel.permissionsFor(client.user).has(PermissionFlagsBits.ManageMessages)) {
+    log('ERROR', `Bot lacks MANAGE_MESSAGES permission in channel ${PZ_NOTIFICATIONS_CHANNEL_ID}`);
+    playerMessageHistory.delete(playerName);
+    return;
+  }
+  
+  let deletedCount = 0;
+  let failedCount = 0;
   
   for (const messageId of historyData.messages) {
     try {
       const message = await channel.messages.fetch(messageId);
       await message.delete();
+      deletedCount++;
+      log('DEBUG', `Deleted message ${messageId} for ${playerName}`);
+      
+      // Small delay between deletions to avoid rate limiting
+      await sleep(100);
     } catch (error) {
-      log('WARN', `Failed to delete message ${messageId}`, error);
+      failedCount++;
+      // Common error codes:
+      // 10008 = Unknown Message (already deleted)
+      // 50013 = Missing Permissions
+      if (error.code === 10008) {
+        log('DEBUG', `Message ${messageId} already deleted for ${playerName}`);
+      } else if (error.code === 50013) {
+        log('ERROR', `Missing permission to delete message ${messageId}`);
+      } else {
+        log('WARN', `Failed to delete message ${messageId} for ${playerName}`, error);
+      }
     }
   }
   
+  log('INFO', `Message cleanup for ${playerName}: ${deletedCount} deleted, ${failedCount} failed`);
   playerMessageHistory.delete(playerName);
-}
-
-function startPZMonitoring() {
-  log('INFO', '🎮 Starting PZ server monitoring...');
-  checkPZPlayers();
-  setInterval(checkPZPlayers, 30000); // Check every 30 seconds
 }
 
 // ==================== DISCORD EVENT HANDLERS ====================
@@ -604,7 +639,7 @@ client.on('messageCreate', async (message) => {
       const isAdmin = ADMIN_ROLE_ID ? 
         message.member.roles.cache.has(ADMIN_ROLE_ID) : 
         message.member.permissions.has(PermissionFlagsBits.Administrator);
-
+      
       if (!isAdmin) {
         return message.reply('❌ You need administrator permissions to send Discord announcements.');
       }
