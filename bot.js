@@ -609,49 +609,6 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
-    // Send Discord announcement (admin only)
-    if (content.startsWith('!dcmessage ')) {
-      const isAdmin = ADMIN_ROLE_ID ? 
-        message.member.roles.cache.has(ADMIN_ROLE_ID) : 
-        message.member.permissions.has(PermissionFlagsBits.Administrator);
-  
-      if (!isAdmin) {
-        return message.reply('❌ You need administrator permissions to send Discord announcements.');
-      }
-  
-      const cooldown = checkCooldown(message.author.id, 'dcmessage');
-      if (cooldown.onCooldown) {
-        return message.reply(`⏳ Please wait ${cooldown.timeLeft}s before using this command again.`);
-      }
-  
-      const announcement = message.content.substring(11).trim(); // Remove "!dcmessage "
-  
-      if (!announcement) {
-        return message.reply('❌ Please provide a message to send.');
-      }
-  
-      try {
-        const announcementChannel = client.channels.cache.get(ANNOUNCEMENT_CHANNEL_ID);
-    
-        if (!announcementChannel) {
-          return message.reply('❌ Announcement channel not found! Check bot configuration.');
-        }
-    
-        // Check if bot has permission to send messages in that channel
-        if (!announcementChannel.permissionsFor(client.user).has(PermissionFlagsBits.SendMessages)) {
-          return message.reply('❌ Bot does not have permission to send messages in the announcement channel.');
-        }
-    
-        await announcementChannel.send(announcement);
-        await message.reply(`✅ Announcement sent to <#${ANNOUNCEMENT_CHANNEL_ID}>!`);
-        log('INFO', `📣 Discord announcement sent by ${message.author.tag}: ${announcement}`);
-      } catch (error) {
-        log('ERROR', 'Failed to send Discord announcement', error);
-        await message.reply('❌ Failed to send announcement. Check bot logs.');
-      }
-      return;
-    }
-    
     // Send Discord announcement to specified channel (admin only)
     if (content.startsWith('!dcmessage ')) {
       const isAdmin = ADMIN_ROLE_ID ? 
