@@ -581,10 +581,6 @@ client.on('messageCreate', async (message) => {
     
     // Send custom announcement (admin only)
     if (content.startsWith('!announce ')) {
-      // Check if the command is sent in the correct announcement channel
-      if (message.channel.id !== ANNOUNCEMENT_CHANNEL_ID) {
-        return message.reply(`❌ This command can only be used in <#${ANNOUNCEMENT_CHANNEL_ID}>.`);
-      }
       const isAdmin = ADMIN_ROLE_ID ? 
         message.member.roles.cache.has(ADMIN_ROLE_ID) : 
         message.member.permissions.has(PermissionFlagsBits.Administrator);
@@ -613,7 +609,7 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
-    // Send Discord announcement to specified channel (admin only)
+    // Send Discord announcement to specified channel (admin only)/ if no channel will go directly to announcement
     if (content.startsWith('!dcmessage ')) {
       const isAdmin = ADMIN_ROLE_ID ? 
         message.member.roles.cache.has(ADMIN_ROLE_ID) : 
@@ -628,15 +624,26 @@ client.on('messageCreate', async (message) => {
         return message.reply(`⏳ Please wait ${cooldown.timeLeft}s before using this command again.`);
       }
 
-      // Parse command: !dcmessage <channel_id> <message>
+      // Parse command: !dcmessage <message> OR !dcmessage <channel_id> <message>
       const args = message.content.substring(11).trim().split(' ');
   
-      if (args.length < 1) {
-        return message.reply('❌ Usage: `!dcmessage <channel_id> <message>`\nExample: `!dcmessage 1440309180979347486 Hello everyone!`\n\n**Tip:** You can attach images to send them too!');
+      if (args.length < 1 && message.attachments.size === 0) {
+        return message.reply('❌ Usage:\n`!dcmessage <message>` - Send to default announcement channel\n`!dcmessage <channel_id> <message>` - Send to specific channel\n\nExample: `!dcmessage Hello everyone!`\nExample: `!dcmessage 1440309180979347486 Hello everyone!`\n\n**Tip:** You can attach images to send them too!');
       }
 
-      const targetChannelId = args[0];
-      const announcement = args.slice(1).join(' ');
+      let targetChannelId;
+      let announcement;
+
+      // Check if first argument is a channel ID (numeric)
+      if (args.length > 0 && /^\d+$/.test(args[0])) {
+        // First arg is channel ID
+        targetChannelId = args[0];
+        announcement = args.slice(1).join(' ');
+      } else {
+        // No channel ID specified, use default ANNOUNCEMENT_CHANNEL_ID
+        targetChannelId = ANNOUNCEMENT_CHANNEL_ID;
+        announcement = args.join(' ');
+      }
 
       // Check if there are attachments
       const attachments = message.attachments;
@@ -674,11 +681,11 @@ client.on('messageCreate', async (message) => {
           }));
         }
 
-        // ✅ FIXED: Send messageOptions instead of just announcement
         await announcementChannel.send(messageOptions);
 
         const attachmentInfo = hasAttachments ? ` with ${attachments.size} attachment(s)` : '';
-        await message.reply(`✅ Announcement sent to <#${targetChannelId}>!${attachmentInfo}`);
+        const channelInfo = targetChannelId === ANNOUNCEMENT_CHANNEL_ID ? ' (default announcement channel)' : '';
+        await message.reply(`✅ Announcement sent to <#${targetChannelId}>${channelInfo}!${attachmentInfo}`);
         log('INFO', `📣 Discord announcement sent by ${message.author.tag} to ${targetChannelId}: ${announcement}${attachmentInfo}`);
       } catch (error) {
         log('ERROR', 'Failed to send Discord announcement', error);
@@ -699,8 +706,7 @@ client.on('messageCreate', async (message) => {
 
 **Admin Commands:**
 - \`!restart\` - Manually trigger server restart with countdown
-- \`!announce <message>\` - Send announcement to in-game chat
-- \`!dcmessage <message>\` - Send announcement to Discord channel
+- \`!announce <message>\` - Send announcement to in-game
 - \`!dcmessage <discord channel ID> <message>\` - Send message to Specified Discord channel
 
 **Automatic Features:**
