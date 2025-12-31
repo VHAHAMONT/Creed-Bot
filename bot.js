@@ -442,7 +442,7 @@ async function notifyPlayerLeft(playerName) {
       // Delete messages after 3 seconds
       setTimeout(async () => {
         await deletePlayerMessages(playerName, channel);
-      }, 3000);
+      }, 5000);
     }
   } catch (error) {
     log('ERROR', 'Failed to send player left notification', error);
@@ -469,7 +469,7 @@ async function deletePlayerMessages(playerName, channel) {
 function startPZMonitoring() {
   log('INFO', '🎮 Starting PZ server monitoring...');
   checkPZPlayers();
-  setInterval(checkPZPlayers, 30000); // Check every 30 seconds
+  setInterval(checkPZPlayers, 10000); // Check every 10 seconds
 }
 
 // ==================== DISCORD EVENT HANDLERS ====================
@@ -581,6 +581,10 @@ client.on('messageCreate', async (message) => {
     
     // Send custom announcement (admin only)
     if (content.startsWith('!announce ')) {
+      // Check if the command is sent in the correct announcement channel
+      if (message.channel.id !== ANNOUNCEMENT_CHANNEL_ID) {
+        return message.reply(`❌ This command can only be used in <#${ANNOUNCEMENT_CHANNEL_ID}>.`);
+      }
       const isAdmin = ADMIN_ROLE_ID ? 
         message.member.roles.cache.has(ADMIN_ROLE_ID) : 
         message.member.permissions.has(PermissionFlagsBits.Administrator);
