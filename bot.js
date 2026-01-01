@@ -72,7 +72,7 @@ const client = new Client({
 
 // State management
 let onlinePlayers = new Set();
-const playerMessageHistory = new Map();
+const playerLastMessage = new Map(); // NEW: Simple message tracking
 let restartInProgress = false;
 const cooldowns = new Map();
 let rconConnection = null;
@@ -128,22 +128,6 @@ function checkCooldown(userId, commandName) {
   
   return { onCooldown: false };
 }
-
-// Cleanup old player message history (prevent memory leaks)
-function cleanupMessageHistory() {
-  const maxAge = 60 * 60 * 1000; // 1 hour
-  const now = Date.now();
-  
-  for (const [playerName, data] of playerMessageHistory.entries()) {
-    if (data.timestamp && (now - data.timestamp) > maxAge) {
-      playerMessageHistory.delete(playerName);
-      log('DEBUG', `Cleaned up old message history for ${playerName}`);
-    }
-  }
-}
-
-// Run cleanup every 30 minutes
-setInterval(cleanupMessageHistory, 30 * 60 * 1000);
 
 // ==================== RCON CONNECTION MANAGEMENT ====================
 
@@ -349,6 +333,9 @@ function scheduleRestarts() {
 
 // ==================== PLAYER MONITORING ====================
 
+// Simple tracking: just store the last message ID for each player
+const playerLastMessage = new Map(); // playerName -> messageId
+
 async function checkPZPlayers() {
   try {
     const response = await sendRCONCommand('players');
@@ -367,8 +354,8 @@ async function checkPZPlayers() {
     for (const player of onlinePlayers) {
       if (!currentPlayers.has(player)) {
         log('INFO', `Player left: ${player}`);
-        await notifyPlayerLeft(player);
         onlinePlayers.delete(player);
+        await notifyPlayerLeft(player);
       }
     }
   } catch (error) {
@@ -407,17 +394,24 @@ function parsePlayers(response) {
 async function notifyPlayerJoined(playerName) {
   try {
     const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
-    if (channel) {
-      const message = await channel.send(`🎮 **${playerName}** joined the CREED PZ server! 🟢`);
-      
-      if (!playerMessageHistory.has(playerName)) {
-        playerMessageHistory.set(playerName, { 
-          messages: [], 
-          timestamp: Date.now() 
-        });
+    if (!channel) return;
+    
+    // Delete old message if exists
+    if (playerLastMessage.has(playerName)) {
+      const oldMessageId = playerLastMessage.get(playerName);
+      try {
+        const oldMessage = await channel.messages.fetch(oldMessageId);
+        await oldMessage.delete();
+        log('DEBUG', `Deleted old message for ${playerName}`);
+      } catch (error) {
+        // Message already deleted or not found - that's fine
       }
-      playerMessageHistory.get(playerName).messages.push(message.id);
     }
+    
+    // Send new join message and store its ID
+    const message = await channel.send(`🎮 **${playerName}** joined the CREED PZ server! 🟢`);
+    playerLastMessage.set(playerName, message.id);
+    
   } catch (error) {
     log('ERROR', 'Failed to send player joined notification', error);
   }
@@ -426,44 +420,37 @@ async function notifyPlayerJoined(playerName) {
 async function notifyPlayerLeft(playerName) {
   try {
     const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
-    if (channel) {
-      const message = await channel.send(`🎮 **${playerName}** left the CREED PZ server. 🔴`);
-      
-      const historyData = playerMessageHistory.get(playerName);
-      if (historyData) {
-        historyData.messages.push(message.id);
-      } else {
-        playerMessageHistory.set(playerName, { 
-          messages: [message.id], 
-          timestamp: Date.now() 
-        });
+    if (!channel) return;
+    
+    // Delete the join message immediately when they leave
+    if (playerLastMessage.has(playerName)) {
+      const messageId = playerLastMessage.get(playerName);
+      try {
+        const message = await channel.messages.fetch(messageId);
+        await message.delete();
+        log('INFO', `Deleted join message for ${playerName} who left`);
+      } catch (error) {
+        log('WARN', `Could not delete message for ${playerName}: ${error.message}`);
       }
-      
-      // Delete messages after 3 seconds
-      setTimeout(async () => {
-        await deletePlayerMessages(playerName, channel);
-      }, 5000);
+      playerLastMessage.delete(playerName);
     }
+    
+    // Optionally send a "left" message that auto-deletes
+    const leftMessage = await channel.send(`🎮 **${playerName}** left the CREED PZ server. 🔴`);
+    
+    // Auto-delete the "left" message after 5 seconds
+    setTimeout(async () => {
+      try {
+        await leftMessage.delete();
+        log('DEBUG', `Deleted leave message for ${playerName}`);
+      } catch (error) {
+        // Already deleted - that's fine
+      }
+    }, 5000);
+    
   } catch (error) {
-    log('ERROR', 'Failed to send player left notification', error);
+    log('ERROR', 'Failed to handle player left notification', error);
   }
-}
-
-async function deletePlayerMessages(playerName, channel) {
-  const historyData = playerMessageHistory.get(playerName);
-  
-  if (!historyData || !historyData.messages || historyData.messages.length === 0) return;
-  
-  for (const messageId of historyData.messages) {
-    try {
-      const message = await channel.messages.fetch(messageId);
-      await message.delete();
-    } catch (error) {
-      log('WARN', `Failed to delete message ${messageId}`, error);
-    }
-  }
-  
-  playerMessageHistory.delete(playerName);
 }
 
 function startPZMonitoring() {
