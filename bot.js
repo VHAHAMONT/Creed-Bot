@@ -72,7 +72,7 @@ const client = new Client({
 
 // State management
 let onlinePlayers = new Set();
-const playerLastMessage = new Map(); // NEW: Simple message tracking
+const playerLastMessage = new Map();  // <-- NEW simplified tracking
 let restartInProgress = false;
 const cooldowns = new Map();
 let rconConnection = null;
@@ -332,9 +332,6 @@ function scheduleRestarts() {
 }
 
 // ==================== PLAYER MONITORING ====================
-
-// Simple tracking: just store the last message ID for each player
-const playerLastMessage = new Map(); // playerName -> messageId
 
 async function checkPZPlayers() {
   try {
