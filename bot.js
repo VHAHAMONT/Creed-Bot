@@ -779,7 +779,8 @@ process.on('SIGTERM', async () => {
 });
 
 // Login to Discord
+log('INFO', 'Attempting to login to Discord...');
 client.login(process.env.DISCORD_TOKEN).catch(error => {
-  log('ERROR', 'Failed to login to Discord', error);
+  log('ERROR', 'CRITICAL: Failed to login to Discord', error);
   process.exit(1);
 });
