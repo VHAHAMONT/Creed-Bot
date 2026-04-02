@@ -65,8 +65,8 @@ const COMMAND_COOLDOWNS = {
 const STATUS_CONFIG = {
   serverName: process.env.SERVER_NAME || 'CREED PZ Server',
   maxPlayers: parseInt(process.env.MAX_PLAYERS) || 32,
-  bannerImage: process.env.SERVER_BANNER_URL || https://imgur.com/gallery/creed-server-DUTIGji#,
-  thumbnailImage: process.env.SERVER_THUMBNAIL_URL || https://imgur.com/gallery/creed-server-DUTIGji#,
+  bannerImage: process.env.SERVER_BANNER_URL || 'https://i.imgur.com/DUTIGji.jpeg',
+  thumbnailImage: process.env.SERVER_THUMBNAIL_URL || null,
 };
 
 // Create Discord client
@@ -271,21 +271,24 @@ async function buildStatusEmbed() {
   const maxPlayers = STATUS_CONFIG.maxPlayers;
   const connectionStr = `${process.env.PZ_SERVER_IP}:${process.env.PZ_RCON_PORT}`;
 
-  // Calculate next restart time
+  // Calculate next restart time safely (no cron job creation)
   const restartSchedule = process.env.RESTART_SCHEDULE || '0 0 */8 * * *';
-  let nextRestartStr = 'N/A';
+  let nextRestartStr = 'Scheduled';
   try {
-    const interval = cron.schedule(restartSchedule, () => {});
-    interval.stop();
-    // Calculate roughly based on schedule pattern
     const parts = restartSchedule.split(' ');
+    // Supports "0 0 */N * * *" (every N hours) format
     if (parts[2] && parts[2].startsWith('*/')) {
       const everyHours = parseInt(parts[2].replace('*/', ''));
       const currentHour = now.getHours();
+      const currentMinute = now.getMinutes();
       const nextHour = Math.ceil((currentHour + 1) / everyHours) * everyHours;
-      const hoursLeft = nextHour - currentHour;
-      const minutesLeft = 60 - now.getMinutes();
-      nextRestartStr = `${hoursLeft > 1 ? hoursLeft - 1 + 'h ' : ''}${minutesLeft}m`;
+      const hoursLeft = nextHour - currentHour - 1;
+      const minutesLeft = 60 - currentMinute;
+      if (hoursLeft > 0) {
+        nextRestartStr = `${hoursLeft}h ${minutesLeft}m`;
+      } else {
+        nextRestartStr = `${minutesLeft}m`;
+      }
     }
   } catch (e) {
     nextRestartStr = 'Scheduled';
