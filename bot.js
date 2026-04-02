@@ -72,7 +72,7 @@ const client = new Client({
 
 // State management
 let onlinePlayers = new Set();
-const playerLastMessage = new Map();  // <-- NEW simplified tracking
+const playerLastMessage = new Map();
 let restartInProgress = false;
 const cooldowns = new Map();
 let rconConnection = null;
@@ -96,7 +96,6 @@ function log(level, message, error = null) {
 // Sanitize user input to prevent injection
 function sanitizeMessage(message) {
   if (typeof message !== 'string') return '';
-  // Remove quotes, backslashes, and limit length
   return message
     .replace(/['"\\]/g, '')
     .replace(/[^\x20-\x7E]/g, '') // Remove non-printable characters
@@ -132,7 +131,6 @@ function checkCooldown(userId, commandName) {
 // ==================== RCON CONNECTION MANAGEMENT ====================
 
 async function connectRCON() {
-  // Close existing connection if present
   if (rconConnection) {
     try {
       rconConnection.end();
@@ -204,7 +202,7 @@ async function sendRCONCommand(command) {
     } catch (error) {
       attempts++;
       log('ERROR', `Failed to send RCON command (attempt ${attempts}/${maxAttempts})`, error);
-      rconConnection = null; // Reset here on every failure
+      rconConnection = null;
       
       if (attempts < maxAttempts) {
         await sleep(2000);
@@ -218,16 +216,19 @@ async function sendRCONCommand(command) {
 
 // ==================== DISCORD NOTIFICATIONS ====================
 
+// Returns the sent message so callers can track it for deletion
 async function postDiscordNotification(message, isError = false) {
   try {
     const channel = client.channels.cache.get(PZ_NOTIFICATIONS_CHANNEL_ID);
     if (channel) {
       const emoji = isError ? '⚠️' : '🔄';
-      await channel.send(`${emoji} ${message}`);
+      const sentMessage = await channel.send(`${emoji} ${message}`);
+      return sentMessage; // <-- return message object for tracking
     }
   } catch (error) {
     log('ERROR', 'Failed to post Discord notification', error);
   }
+  return null;
 }
 
 // ==================== RESTART FUNCTIONS ====================
@@ -243,6 +244,8 @@ const RESTART_TIMINGS = [
 ];
 
 async function executeRestartCountdown() {
+  const restartMessages = []; // Track all restart Discord messages for cleanup
+
   try {
     log('INFO', '🔄 Starting restart countdown sequence...');
     
@@ -254,7 +257,8 @@ async function executeRestartCountdown() {
       }
       
       if (timing.discord) {
-        await postDiscordNotification(timing.discord);
+        const msg = await postDiscordNotification(timing.discord);
+        if (msg) restartMessages.push(msg); // Store for later deletion
       }
       
       if (timing.wait) {
@@ -264,7 +268,8 @@ async function executeRestartCountdown() {
     
     // Final notification
     await sendRCONMessage('🔄 Server restarting now...');
-    await postDiscordNotification('**Server is restarting now...** 🔄');
+    const restartNowMsg = await postDiscordNotification('**Server is restarting now...** 🔄');
+    if (restartNowMsg) restartMessages.push(restartNowMsg);
     
     // Save the world
     log('INFO', 'Sending save command...');
@@ -276,9 +281,9 @@ async function executeRestartCountdown() {
     }
     
     log('INFO', 'Waiting for save to complete...');
-    await sleep(5000); // Wait 5 seconds for save
+    await sleep(5000);
     
-    // Quit server (requires external process manager to restart)
+    // Quit server
     log('INFO', 'Sending quit command...');
     const quitResponse = await sendRCONCommand('quit');
     if (!quitResponse) {
@@ -287,11 +292,26 @@ async function executeRestartCountdown() {
       return false;
     }
     
-    await postDiscordNotification('**Server shutdown initiated. Will be back online shortly!** ✅');
+    const doneMsg = await postDiscordNotification('**Server shutdown initiated. Will be back online shortly!** ✅');
+    if (doneMsg) restartMessages.push(doneMsg);
+
     log('INFO', '✅ Restart sequence completed successfully');
     
-    // Clear online players since server is restarting
+    // Clear online players and message tracking since server is restarting
     onlinePlayers.clear();
+    playerLastMessage.clear();
+
+    // Delete all restart messages after 10 minutes
+    setTimeout(async () => {
+      for (const msg of restartMessages) {
+        try {
+          await msg.delete();
+        } catch (error) {
+          // Already deleted or missing — ignore
+        }
+      }
+      log('INFO', 'Cleaned up restart notification messages');
+    }, 600000); // 600000ms = 10 minutes
     
     return true;
   } catch (error) {
@@ -432,10 +452,9 @@ async function notifyPlayerLeft(playerName) {
       playerLastMessage.delete(playerName);
     }
     
-    // Optionally send a "left" message that auto-deletes
+    // Send a "left" message that auto-deletes after 5 seconds
     const leftMessage = await channel.send(`🎮 **${playerName}** left the CREED PZ server. 🔴`);
     
-    // Auto-delete the "left" message after 5 seconds
     setTimeout(async () => {
       try {
         await leftMessage.delete();
@@ -545,7 +564,7 @@ client.on('messageCreate', async (message) => {
         return message.reply('⚠️ A restart is already in progress!');
       }
   
-      restartInProgress = true;  // Set the flag
+      restartInProgress = true;
   
       try {
         await message.reply('✅ Server restart initiated! Countdown starting...');
@@ -558,7 +577,7 @@ client.on('messageCreate', async (message) => {
         log('ERROR', 'Manual restart command failed', error);
         await message.reply('❌ An error occurred during restart. Check logs.');
       } finally {
-        restartInProgress = false;  // Always reset the flag
+        restartInProgress = false;
       }
       return;
     }
@@ -593,7 +612,7 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
-    // Send Discord announcement to specified channel (admin only)/ if no channel will go directly to announcement
+    // Send Discord announcement to specified channel (admin only)
     if (content.startsWith('!dcmessage ')) {
       const isAdmin = ADMIN_ROLE_ID ? 
         message.member.roles.cache.has(ADMIN_ROLE_ID) : 
@@ -611,7 +630,7 @@ client.on('messageCreate', async (message) => {
       // Parse command: !dcmessage <message> OR !dcmessage <channel_id> <message>
       const args = message.content.substring(11).trim().split(' ');
   
-      if (args.length < 1 && message.attachments.size === 0) {
+      if (!args[0] && message.attachments.size === 0) {
         return message.reply('❌ Usage:\n`!dcmessage <message>` - Send to default announcement channel\n`!dcmessage <channel_id> <message>` - Send to specific channel\n\nExample: `!dcmessage Hello everyone!`\nExample: `!dcmessage 1440309180979347486 Hello everyone!`\n\n**Tip:** You can attach images to send them too!');
       }
 
@@ -620,11 +639,9 @@ client.on('messageCreate', async (message) => {
 
       // Check if first argument is a channel ID (numeric)
       if (args.length > 0 && /^\d+$/.test(args[0])) {
-        // First arg is channel ID
         targetChannelId = args[0];
         announcement = args.slice(1).join(' ');
       } else {
-        // No channel ID specified, use default ANNOUNCEMENT_CHANNEL_ID
         targetChannelId = ANNOUNCEMENT_CHANNEL_ID;
         announcement = args.join(' ');
       }
@@ -645,19 +662,16 @@ client.on('messageCreate', async (message) => {
           return message.reply(`❌ Channel with ID \`${targetChannelId}\` not found! Make sure the bot has access to it.`);
         }
 
-        // Check if bot has permission to send messages in that channel
         if (!announcementChannel.permissionsFor(client.user).has(PermissionFlagsBits.SendMessages)) {
           return message.reply(`❌ Bot does not have permission to send messages in <#${targetChannelId}>.`);
         }
 
-        // Prepare message options
         const messageOptions = {};
 
         if (announcement.trim()) {
           messageOptions.content = announcement;
         }
 
-        // Add attachments if present
         if (hasAttachments) {
           messageOptions.files = Array.from(attachments.values()).map(attachment => ({
             attachment: attachment.url,
@@ -752,8 +766,8 @@ process.on('uncaughtException', (error) => {
 });
 
 // Graceful shutdown
-process.on('SIGINT', async () => {
-  log('INFO', 'Received SIGINT, shutting down gracefully...');
+async function shutdown(signal) {
+  log('INFO', `Received ${signal}, shutting down gracefully...`);
   if (rconConnection) {
     try {
       rconConnection.end();
@@ -763,20 +777,10 @@ process.on('SIGINT', async () => {
   }
   client.destroy();
   process.exit(0);
-});
+}
 
-process.on('SIGTERM', async () => {
-  log('INFO', 'Received SIGTERM, shutting down gracefully...');
-  if (rconConnection) {
-    try {
-      rconConnection.end();
-    } catch (error) {
-      log('ERROR', 'Error closing RCON connection', error);
-    }
-  }
-  client.destroy();
-  process.exit(0);
-});
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // Login to Discord
 log('INFO', 'Attempting to login to Discord...');
