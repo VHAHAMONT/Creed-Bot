@@ -21,7 +21,7 @@ app.listen(PORT, () => {
 });
 
 // Discord bot code
-const { Client, GatewayIntentBits, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const Rcon = require('rcon-client').Rcon;
 const cron = require('node-cron');
 
@@ -58,6 +58,15 @@ const COMMAND_COOLDOWNS = {
   announce: 10,
   players: 5,
   dcmessage: 10,
+  status: 10,
+};
+
+// Status embed configuration
+const STATUS_CONFIG = {
+  serverName: process.env.SERVER_NAME || 'CREED PZ Server',
+  maxPlayers: parseInt(process.env.MAX_PLAYERS) || 32,
+  bannerImage: process.env.SERVER_BANNER_URL || https://imgur.com/gallery/creed-server-DUTIGji#,
+  thumbnailImage: process.env.SERVER_THUMBNAIL_URL || https://imgur.com/gallery/creed-server-DUTIGji#,
 };
 
 // Create Discord client
@@ -229,6 +238,112 @@ async function postDiscordNotification(message, isError = false) {
     log('ERROR', 'Failed to post Discord notification', error);
   }
   return null;
+}
+
+// ==================== STATUS EMBED ====================
+
+async function buildStatusEmbed() {
+  const now = new Date();
+
+  // Format date as "M D, D 8" style (Month Day, Day number)
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const dateStr = `${months[now.getMonth()]} ${now.getDate()}, ${days[now.getDay()]}`;
+
+  // Format time in PHT (UTC+8)
+  const timeStr = now.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'Asia/Manila'
+  });
+
+  // Determine server online/offline status based on RCON
+  let isOnline = false;
+  try {
+    await ensureRCONConnection();
+    isOnline = true;
+  } catch (e) {
+    isOnline = false;
+  }
+
+  const playerCount = onlinePlayers.size;
+  const maxPlayers = STATUS_CONFIG.maxPlayers;
+  const connectionStr = `${process.env.PZ_SERVER_IP}:${process.env.PZ_RCON_PORT}`;
+
+  // Calculate next restart time
+  const restartSchedule = process.env.RESTART_SCHEDULE || '0 0 */8 * * *';
+  let nextRestartStr = 'N/A';
+  try {
+    const interval = cron.schedule(restartSchedule, () => {});
+    interval.stop();
+    // Calculate roughly based on schedule pattern
+    const parts = restartSchedule.split(' ');
+    if (parts[2] && parts[2].startsWith('*/')) {
+      const everyHours = parseInt(parts[2].replace('*/', ''));
+      const currentHour = now.getHours();
+      const nextHour = Math.ceil((currentHour + 1) / everyHours) * everyHours;
+      const hoursLeft = nextHour - currentHour;
+      const minutesLeft = 60 - now.getMinutes();
+      nextRestartStr = `${hoursLeft > 1 ? hoursLeft - 1 + 'h ' : ''}${minutesLeft}m`;
+    }
+  } catch (e) {
+    nextRestartStr = 'Scheduled';
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle(STATUS_CONFIG.serverName)
+    .setColor(isOnline ? 0x00ff00 : 0xff0000)
+    .addFields(
+      {
+        name: '🟢 Status',
+        value: isOnline ? 'Online' : '🔴 Offline',
+        inline: true
+      },
+      {
+        name: '🔗 Connection',
+        value: `\`${connectionStr}\``,
+        inline: true
+      },
+      {
+        name: '👥 Players',
+        value: `${playerCount}/${maxPlayers}`,
+        inline: true
+      },
+      {
+        name: '📅 Date',
+        value: dateStr,
+        inline: true
+      },
+      {
+        name: '🕐 Time',
+        value: timeStr,
+        inline: true
+      },
+      {
+        name: restartInProgress ? '🔄 Restart' : '⏰ Next Restart',
+        value: restartInProgress ? 'In Progress...' : nextRestartStr,
+        inline: true
+      }
+    )
+    .setFooter({ text: `Last update: ${timeStr} PHT | CREED Bot` })
+    .setTimestamp();
+
+  if (STATUS_CONFIG.bannerImage) {
+    embed.setImage(STATUS_CONFIG.bannerImage);
+  }
+
+  if (STATUS_CONFIG.thumbnailImage) {
+    embed.setThumbnail(STATUS_CONFIG.thumbnailImage);
+  }
+
+  // List online players if any
+  if (playerCount > 0) {
+    const playerList = Array.from(onlinePlayers).map(p => `• ${p}`).join('\n');
+    embed.addFields({ name: '🎮 Online Players', value: playerList, inline: false });
+  }
+
+  return embed;
 }
 
 // ==================== RESTART FUNCTIONS ====================
@@ -534,6 +649,23 @@ client.on('messageCreate', async (message) => {
       return;
     }
     
+    // Status embed command
+    if (content === '!status' || content === '!serverstatus') {
+      const cooldown = checkCooldown(message.author.id, 'status');
+      if (cooldown.onCooldown) {
+        return message.reply(`⏳ Please wait ${cooldown.timeLeft}s before using this command again.`);
+      }
+
+      try {
+        const embed = await buildStatusEmbed();
+        await message.reply({ embeds: [embed] });
+      } catch (error) {
+        log('ERROR', 'Failed to build status embed', error);
+        await message.reply('❌ Failed to fetch server status.');
+      }
+      return;
+    }
+
     // Test RCON
     if (content === '!testrcon') {
       try {
@@ -698,6 +830,7 @@ client.on('messageCreate', async (message) => {
 **CREED PZ Bot Commands:**
 
 **General Commands:**
+- \`!status\` or \`!serverstatus\` - Show server status card
 - \`!players\` or \`!online\` - Check who's online
 - \`!testrcon\` - Test RCON connection
 - \`!help\` or \`!commands\` - Show this message
